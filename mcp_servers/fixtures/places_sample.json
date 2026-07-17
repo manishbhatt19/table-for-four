@@ -1,0 +1,61 @@
+{
+  "_comment": "Offline fixture. Shape mirrors Google Places API (New) places:searchText response so the same normalization runs in live and offline mode.",
+  "places": [
+    {
+      "id": "fixture-osteria-1",
+      "displayName": { "text": "Osteria Midtown", "languageCode": "en" },
+      "formattedAddress": "127 W 44th St, New York, NY 10036",
+      "primaryType": "italian_restaurant",
+      "types": ["italian_restaurant", "restaurant", "food"],
+      "priceLevel": "PRICE_LEVEL_MODERATE",
+      "rating": 4.5,
+      "userRatingCount": 1820,
+      "currentOpeningHours": { "openNow": true },
+      "location": { "latitude": 40.7570, "longitude": -73.9845 },
+      "websiteUri": "https://example.com/osteria-midtown",
+      "nationalPhoneNumber": "(212) 555-0142"
+    },
+    {
+      "id": "fixture-trattoria-2",
+      "displayName": { "text": "Trattoria del Sole", "languageCode": "en" },
+      "formattedAddress": "58 W 48th St, New York, NY 10036",
+      "primaryType": "italian_restaurant",
+      "types": ["italian_restaurant", "restaurant", "food"],
+      "priceLevel": "PRICE_LEVEL_EXPENSIVE",
+      "rating": 4.7,
+      "userRatingCount": 942,
+      "currentOpeningHours": { "openNow": true },
+      "location": { "latitude": 40.7590, "longitude": -73.9810 },
+      "websiteUri": "https://example.com/trattoria-del-sole",
+      "nationalPhoneNumber": "(212) 555-0177"
+    },
+    {
+      "id": "fixture-pizzeria-3",
+      "displayName": { "text": "Nonna's Gluten-Free Kitchen", "languageCode": "en" },
+      "formattedAddress": "310 W 50th St, New York, NY 10019",
+      "primaryType": "italian_restaurant",
+      "types": ["italian_restaurant", "pizza_restaurant", "restaurant", "food"],
+      "priceLevel": "PRICE_LEVEL_MODERATE",
+      "rating": 4.3,
+      "userRatingCount": 611,
+      "currentOpeningHours": { "openNow": false },
+      "location": { "latitude": 40.7625, "longitude": -73.9865 },
+      "websiteUri": "https://example.com/nonnas-gf",
+      "nationalPhoneNumber": "(212) 555-0199"
+    },
+    {
+      "id": "fixture-bistro-4",
+      "displayName": { "text": "Le Petit Bistro", "languageCode": "en" },
+      "formattedAddress": "45 W 55th St, New York, NY 10019",
+      "primaryType": "french_restaurant",
+      "types": ["french_restaurant", "restaurant", "food"],
+      "priceLevel": "PRICE_LEVEL_VERY_EXPENSIVE",
+      "rating": 4.6,
+      "userRatingCount": 1305,
+      "currentOpeningHours": { "openNow": true },
+      "location": { "latitude": 40.7615, "longitude": -73.9770 },
+      "websiteUri": "https://example.com/le-petit-bistro",
+      "nationalPhoneNumber": "(212) 555-0121"
+    }
+  ]
+}

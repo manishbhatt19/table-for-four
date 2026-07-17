@@ -1,0 +1,75 @@
+# Project Progress & Handoff — Table for Four
+
+_Snapshot as of 2026-07-17. This document records what has been built so far,
+how it's wired together, and what comes next — so any session (human or agent)
+can pick up without re-deriving the state._
+
+## What this project is
+
+An MCP-first, LangGraph-orchestrated agentic restaurant concierge (CMU AI Agent
+Certification capstone). It takes a natural-language dining request, searches
+real restaurant data, reasons over fit, and books a table through a self-built
+mock reservation service — with a human-in-the-loop confirmation step and a full
+governance/audit trail.
+
+## Milestone status
+
+| Milestone | State |
+|---|---|
+| 1 — Search MCP server (Google Places, offline-testable) | ✅ Done |
+| 2 — Mock booking FastAPI + booking MCP server | ⬜ Next |
+| 3 — LangGraph orchestrator, end-to-end happy path | ⬜ |
+| 4 — Human-in-loop gate + governance/audit logging | ⬜ |
+| 5 (stretch) — member preferences, model comparison, demo | ⬜ |
+
+## What has been built (Milestone 1)
+
+### Repo scaffolding
+- `pyproject.toml` — Python ≥3.12, deps: `httpx`, `mcp[cli]`, `python-dotenv`;
+  dev dep `pytest`. `pytest` configured with `pythonpath = ["."]`.
+- `.python-version` (3.12), `uv.lock`, `.gitignore`, `.env.example`.
+- `README.md` — architecture diagram, milestone table, getting-started.
+- `docs/google_places_setup.md` — step-by-step guide to enable live Google
+  Places API (New) and drop a key into `.env`.
+
+### Search MCP server — `mcp_servers/search_server.py`
+- Exposes one MCP tool: **`search_restaurants`**.
+- **Dual-mode by design:** runs in **offline fixture mode** with no API key, and
+  automatically switches to **live** Google Places API (New) when
+  `GOOGLE_PLACES_API_KEY` is set. Same normalization path in both modes.
+- Live calls use an explicit **field mask** (`X-Goog-FieldMask`) requesting only
+  the fields the concierge reasons over — this controls both response shape and
+  billing SKU (cost-control / responsible-AI point for the writeup).
+- Normalizes raw Places results into a clean restaurant shape (`place_id`,
+  `name`, `address`, `price_level` mapped from enum → 0–4, `rating`, `open_now`,
+  etc.).
+- Post-search filters: `max_price_level`, `min_rating`, `open_now`, `max_results`
+  (clamped 1–20).
+- Returns `source` ("live"|"fixture") in the payload so the future governance
+  layer can record whether a booking decision rested on live or mock data.
+- `mcp_servers/fixtures/places_sample.json` — offline fixture mirroring the real
+  API response shape.
+
+### Tests — `tests/test_search_server.py`
+- Four offline smoke tests calling the tool function directly (no MCP client, no
+  network): fixture results, price filter, open-now filter, min-rating filter.
+
+## Known environment note
+- The project uses **`uv`** for env/deps. In this session `uv` was **not on the
+  PATH** for either the Bash or PowerShell tools, so `uv run pytest` could not be
+  executed here. Verify locally with:
+  ```bash
+  uv sync
+  uv run pytest -q
+  ```
+  If `uv` isn't found, install from https://docs.astral.sh/uv/ or ensure its
+  install dir (typically `~/.local/bin` on the shell PATH) is exported.
+
+## Not yet started
+- No git commits yet (`master` branch, all files untracked).
+- `mock_booking_api/`, `agent/`, `governance/` directories referenced in the
+  README layout do **not** exist yet — they are Milestones 2–4.
+
+## Suggested next steps
+1. Make the first git commit to capture Milestone 1.
+2. Milestone 2: build the mock booking FastAPI backend + a booking MCP server.
