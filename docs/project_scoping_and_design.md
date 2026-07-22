@@ -236,7 +236,23 @@ dietary/occasion themes (to give semantic retrieval real signal).
 | 2.5 | **Perks / RAG:** synthetic perks → Chroma → `find_perks` MCP tool | ⬜ Planned |
 | 3 | LangGraph orchestrator; end-to-end happy path (search → perks → book) | ⬜ |
 | 4 | Human-in-the-loop gate + governance/audit logging | ⬜ |
-| 5 | *(Stretch)* member preferences, model comparison, polished demo | ⬜ |
+| 5 | *(Stretch)* member preferences, model comparison, **illustrative restaurant imagery**, polished demo | ⬜ |
+
+### 9.1 Milestone 5 — illustrative restaurant imagery *(stretch)*
+A UX-polish layer that shows a representative image alongside each option to make
+the concierge feel richer in the demo. Scoped deliberately to respect
+representational integrity (see §10):
+- **Storage:** images live in a **folder**; each restaurant record carries a
+  `photo` *reference/path* — image bytes are **never** stored in the vector DB.
+- **Sourcing:** *live mode* uses **real Google Places photos** (authentic, of the
+  actual place); *offline mode* uses **generic, cuisine-themed illustrative
+  images**, clearly labeled — never presented as a depiction of a specific named
+  restaurant.
+- **Sequencing:** presentation polish, not agent capability — built only after the
+  core loop (search → perks → human gate → book) works end-to-end.
+- *(Optional stretch-within-stretch:* multimodal CLIP embeddings to enable
+  visually-similar retrieval — the one design that would let images genuinely earn
+  a place in the vector store.)
 
 ---
 
@@ -254,6 +270,12 @@ dietary/occasion themes (to give semantic retrieval real signal).
   is restricted to the single API it needs, capping blast radius if leaked.
 - **Reproducibility.** Offline modes and a seeded synthetic generator make runs
   deterministic and gradable without credentials.
+- **Representational integrity (imagery).** Any AI-generated or stock restaurant
+  image is **illustrative only** and explicitly labeled as such — the system never
+  fabricates a picture and presents it as a depiction of a specific, real, named
+  restaurant. Only *live* Google Places photos are shown as actual images of a
+  place. This guardrail is a first-class design constraint on the Milestone 5
+  imagery layer, not an afterthought.
 
 ---
 
@@ -265,6 +287,7 @@ dietary/occasion themes (to give semantic retrieval real signal).
 | **Vector DB used for its own sake** (perks that are purely structured don't need embeddings) | Hybrid design: embed genuinely unstructured blurbs, filter on structured metadata — vector search only where semantics add value. |
 | **Heavier dependency** (`chromadb` pulls in onnxruntime) | Accepted; local embeddings avoid an external service and keep the offline story intact. |
 | Over-automation of the **irreversible booking** step | Non-negotiable human gate before any write; declines are first-class. |
+| **Misrepresentation via imagery** (a fabricated image implying it depicts a specific real restaurant) | Illustrative-only, clearly-labeled generic imagery offline; real Google Places photos only in live mode; never caption a synthetic image as a specific named venue (see §10). |
 | **Scope creep** from stretch ideas | Milestones are ordered; stretch items (M5) only after the core loop works end-to-end. |
 
 ---
