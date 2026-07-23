@@ -233,7 +233,7 @@ dietary/occasion themes (to give semantic retrieval real signal).
 |---|---|---|
 | 1 | Search MCP server (Google Places, offline-testable) | ✅ Complete |
 | 2 | Mock booking FastAPI + booking MCP server | ⬜ Next |
-| 2.5 | **Perks / RAG:** synthetic perks → Chroma → `find_perks` MCP tool | ⬜ Planned |
+| 2.5 | **Perks / RAG:** synthetic perks → Chroma → `find_perks` MCP tool | ✅ Complete |
 | 3 | LangGraph orchestrator; end-to-end happy path (search → perks → book) | ⬜ |
 | 4 | Human-in-the-loop gate + governance/audit logging | ⬜ |
 | 5 | *(Stretch)* member preferences, model comparison, **illustrative restaurant imagery**, polished demo | ⬜ |

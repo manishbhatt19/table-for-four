@@ -17,10 +17,25 @@ governance/audit trail.
 | Milestone | State |
 |---|---|
 | 1 — Search MCP server (Google Places, offline-testable) | ✅ Done |
+| 2.5 — Perks/RAG (synthetic perks → Chroma → `find_perks`) | ✅ Done |
 | 2 — Mock booking FastAPI + booking MCP server | ⬜ Next |
 | 3 — LangGraph orchestrator, end-to-end happy path | ⬜ |
 | 4 — Human-in-loop gate + governance/audit logging | ⬜ |
-| 5 (stretch) — member preferences, model comparison, demo | ⬜ |
+| 5 (stretch) — member preferences, model comparison, illustrative imagery, demo | ⬜ |
+
+### Milestone 2.5 — Perks/RAG (done)
+- `mcp_servers/perks_data.py` — deterministic synthetic perks generator; writes
+  `mcp_servers/fixtures/perks_seed.json` (11 perks keyed to fixture restaurants).
+- `mcp_servers/perks_server.py` — `find_perks` MCP tool: **hybrid retrieval** over
+  a local **Chroma** store — semantic vector search on each perk's `blurb` **+**
+  metadata filters (`place_ids`, `party_size`, `day`, expiry, active). Local
+  `all-MiniLM-L6-v2` embeddings (no API key; ~80MB model downloaded once, then
+  offline). Every result labeled `source: "synthetic"`.
+- Vector store persists to `mcp_servers/.chroma_perks/` (gitignored, regenerable
+  from the seed).
+- `tests/test_perks_server.py` — 5 offline tests (semantic match, party-size
+  filter, expired-perk exclusion, place-id restriction, day filter). Full suite:
+  **9 passing**.
 
 ## What has been built (Milestone 1)
 

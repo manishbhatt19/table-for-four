@@ -14,3 +14,6 @@ wheels/
 
 # Tooling caches
 .pytest_cache/
+
+# Perks vector store (regenerable from fixtures/perks_seed.json)
+mcp_servers/.chroma_perks/

@@ -1,0 +1,220 @@
+"""Perks (offers/coupons) MCP server — hybrid RAG over synthetic perks.
+
+Exposes a single tool, `find_perks`, that combines:
+
+* **Semantic vector search** over each perk's unstructured `blurb`
+  (cuisine / vibe / dietary / occasion), and
+* **Structured metadata filtering** (place, party size, day, expiry, active),
+
+in a local **Chroma** vector database. This hybrid is the point: the vector side
+matches intent ("gluten-free birthday"), the metadata side enforces hard
+constraints (party of 6, not expired) — so the vector DB only carries weight
+where semantics genuinely add value.
+
+Data is **synthetic** (see perks_data.py); every result is labeled
+`source: "synthetic"` so the governance layer records that a suggestion rested on
+mock offer data. Embeddings are the local `all-MiniLM-L6-v2` model: no API key,
+fully offline after a one-time model download (~80MB) on first run.
+
+Run standalone (stdio transport):
+    uv run mcp_servers/perks_server.py
+
+Inspect interactively:
+    uv run mcp dev mcp_servers/perks_server.py
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import date
+from pathlib import Path
+from typing import Any
+
+import chromadb
+from chromadb.api.models.Collection import Collection
+from chromadb.utils import embedding_functions
+from mcp.server.fastmcp import FastMCP
+
+from mcp_servers.perks_data import generate_perks
+
+# --- Configuration -----------------------------------------------------------
+
+SEED_PATH = Path(__file__).parent / "fixtures" / "perks_seed.json"
+CHROMA_PATH = Path(__file__).parent / ".chroma_perks"
+COLLECTION_NAME = "restaurant_perks"
+
+# Fields carried as Chroma metadata (everything except the embedded blurb). Chroma
+# metadata values must be scalars (str/int/float/bool) -- no None, no lists.
+_METADATA_FIELDS = (
+    "place_id",
+    "restaurant_name",
+    "title",
+    "perk_type",
+    "discount_pct",
+    "min_party_size",
+    "dine_in_only",
+    "valid_days",
+    "expiry",
+    "active",
+)
+
+_EMBED = embedding_functions.DefaultEmbeddingFunction()  # all-MiniLM-L6-v2, local
+
+mcp = FastMCP("restaurant-perks")
+
+_collection: Collection | None = None  # lazy persistent singleton
+
+
+# --- Data loading ------------------------------------------------------------
+
+def _load_perks() -> list[dict[str, Any]]:
+    """Load perks from the committed seed, falling back to generating them."""
+    if SEED_PATH.exists():
+        return json.loads(SEED_PATH.read_text(encoding="utf-8")).get("perks", [])
+    return generate_perks()
+
+
+def _metadata(perk: dict[str, Any]) -> dict[str, Any]:
+    return {field: perk[field] for field in _METADATA_FIELDS}
+
+
+def build_collection(client: chromadb.ClientAPI) -> Collection:
+    """Create (or reuse) the perks collection on `client` and load the seed once.
+
+    Uses cosine space so we can report a 0-1 similarity. Idempotent: perks are
+    added only when the collection is empty, so re-runs don't duplicate.
+    """
+    col = client.get_or_create_collection(
+        COLLECTION_NAME,
+        embedding_function=_EMBED,
+        metadata={"hnsw:space": "cosine"},
+    )
+    if col.count() == 0:
+        perks = _load_perks()
+        col.add(
+            ids=[p["perk_id"] for p in perks],
+            documents=[p["blurb"] for p in perks],
+            metadatas=[_metadata(p) for p in perks],
+        )
+    return col
+
+
+def get_collection() -> Collection:
+    """Lazily build/open the persistent perks collection (singleton)."""
+    global _collection
+    if _collection is None:
+        client = chromadb.PersistentClient(path=str(CHROMA_PATH))
+        _collection = build_collection(client)
+    return _collection
+
+
+# --- Retrieval (shared by the tool and tests) --------------------------------
+
+def _build_where(
+    place_ids: list[str] | None, party_size: int | None
+) -> dict[str, Any] | None:
+    """Metadata pre-filter applied inside the vector query."""
+    conds: list[dict[str, Any]] = [{"active": True}]
+    if place_ids:
+        conds.append({"place_id": {"$in": list(place_ids)}})
+    if party_size is not None:
+        # keep perks whose minimum party size the group can satisfy
+        conds.append({"min_party_size": {"$lte": int(party_size)}})
+    if len(conds) == 1:
+        return conds[0]
+    return {"$and": conds}
+
+
+def _row_to_perk(pid: str, doc: str, meta: dict[str, Any], distance: float) -> dict[str, Any]:
+    perk = {"perk_id": pid, "blurb": doc, **meta}
+    perk["similarity"] = round(1.0 - distance, 3)  # cosine distance -> similarity
+    perk["source"] = "synthetic"
+    return perk
+
+
+def query_perks(
+    collection: Collection,
+    query: str,
+    *,
+    place_ids: list[str] | None = None,
+    party_size: int | None = None,
+    day: str | None = None,
+    max_results: int = 5,
+    today: str | None = None,
+) -> list[dict[str, Any]]:
+    """Hybrid retrieval core: vector search + metadata filter + date/day post-filter.
+
+    `today` (ISO date) is injectable for deterministic testing; defaults to the
+    real current date.
+    """
+    n = max(1, min(max_results, 20))
+    where = _build_where(place_ids, party_size)
+    # Over-fetch so the Python-side expiry/day filters still leave enough results.
+    res = collection.query(
+        query_texts=[query], n_results=n * 3, where=where
+    )
+
+    perks = [
+        _row_to_perk(pid, res["documents"][0][i], res["metadatas"][0][i], res["distances"][0][i])
+        for i, pid in enumerate(res["ids"][0])
+    ]
+
+    # Post-filters that Chroma's metadata `where` can't express cleanly.
+    cutoff = today or date.today().isoformat()
+    perks = [p for p in perks if p["expiry"] >= cutoff]  # ISO dates sort lexically
+    if day:
+        perks = [
+            p for p in perks
+            if not p["valid_days"] or day in p["valid_days"].split(",")
+        ]
+    return perks[:n]
+
+
+# --- Tool --------------------------------------------------------------------
+
+@mcp.tool()
+def find_perks(
+    query: str,
+    place_ids: list[str] | None = None,
+    party_size: int | None = None,
+    day: str | None = None,
+    max_results: int = 5,
+) -> dict[str, Any]:
+    """Find restaurant perks (offers/coupons) matching a dining request.
+
+    Combines semantic matching on the perk description with hard-constraint
+    filtering, over a synthetic perks store.
+
+    Args:
+        query: Natural-language intent (e.g. "birthday dinner, one guest is
+            gluten-free"). This is what the vector search matches on.
+        place_ids: Optional restaurant ids to restrict to — typically the
+            candidate set returned by `search_restaurants`, so perks line up with
+            the shortlist.
+        party_size: Group size; excludes perks that require a larger party.
+        day: Three-letter day (e.g. "Fri"); excludes perks not valid that day.
+        max_results: Maximum perks to return (1-20).
+
+    Returns:
+        A dict with `source` ("synthetic"), the `query`, a `result_count`, and a
+        `results` list of matching perks, each with a 0-1 `similarity` score and
+        its structured fields (perk_type, discount_pct, min_party_size, expiry, …).
+    """
+    perks = query_perks(
+        get_collection(),
+        query,
+        place_ids=place_ids,
+        party_size=party_size,
+        day=day,
+        max_results=max_results,
+    )
+    return {
+        "source": "synthetic",
+        "query": query,
+        "result_count": len(perks),
+        "results": perks,
+    }
+
+
+if __name__ == "__main__":
+    mcp.run()
