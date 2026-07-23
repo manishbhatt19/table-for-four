@@ -17,11 +17,24 @@ governance/audit trail.
 | Milestone | State |
 |---|---|
 | 1 — Search MCP server (Google Places, offline-testable) | ✅ Done |
+| 2 — Mock booking FastAPI + booking MCP server | ✅ Done |
 | 2.5 — Perks/RAG (synthetic perks → Chroma → `find_perks`) | ✅ Done |
-| 2 — Mock booking FastAPI + booking MCP server | ⬜ Next |
-| 3 — LangGraph orchestrator, end-to-end happy path | ⬜ |
+| 3 — LangGraph orchestrator, end-to-end happy path | ⬜ Next |
 | 4 — Human-in-loop gate + governance/audit logging | ⬜ |
 | 5 (stretch) — member preferences, model comparison, illustrative imagery, demo | ⬜ |
+
+### Milestone 2 — Mock booking (done)
+- `mock_booking_api/app.py` — self-built **FastAPI** reservation service:
+  `GET /availability`, `POST /bookings`, `GET /bookings/{id}`, in-memory store,
+  **deterministic** availability (pure function of place_id+date, tighter for large
+  parties). `create_booking` is the system's one irreversible write.
+- `mcp_servers/booking_server.py` — `check_availability`, `create_booking`,
+  `get_booking` MCP tools with **live/offline duality**: `BOOKING_API_URL` → real
+  HTTP; unset → drives the app **in-process** via Starlette TestClient (offline,
+  no port). Each result carries `backend` ("live"|"mock").
+- `tests/test_booking.py` — 10 offline tests (backend + MCP tools). Full suite:
+  **19 passing**.
+- Run the backend standalone: `uv run uvicorn mock_booking_api.app:app --port 8000`.
 
 ### Milestone 2.5 — Perks/RAG (done)
 - `mcp_servers/perks_data.py` — deterministic synthetic perks generator; writes

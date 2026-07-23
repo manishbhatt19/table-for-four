@@ -33,9 +33,9 @@ pattern for agent prototyping against partner-gated downstream systems.
 | Milestone | State |
 |---|---|
 | 1 — Search MCP server (Google Places, offline-testable) | ✅ working |
-| 2 — Mock booking FastAPI + booking MCP server | ⬜ next |
+| 2 — Mock booking FastAPI + booking MCP server | ✅ working |
 | 2.5 — Perks/RAG: synthetic perks → Chroma → `find_perks` MCP tool | ✅ working |
-| 3 — LangGraph orchestrator, end-to-end happy path | ⬜ |
+| 3 — LangGraph orchestrator, end-to-end happy path | ⬜ next |
 | 4 — Human-in-loop gate + governance/audit logging | ⬜ |
 | 5 (stretch) — member preferences, model comparison, illustrative imagery, demo | ⬜ |
 
@@ -74,8 +74,9 @@ table-for-four/
 │   ├── search_server.py      # ✅ Google Places search tool (MCP)
 │   ├── perks_server.py       # ✅ perks RAG tool: Chroma hybrid search (MCP)
 │   ├── perks_data.py         # ✅ deterministic synthetic perks generator
+│   ├── booking_server.py     # ✅ booking tools over the mock backend (MCP)
 │   └── fixtures/             # offline fixtures: places + perks_seed.json
-├── mock_booking_api/         # (M2) FastAPI reservation backend
+├── mock_booking_api/         # ✅ FastAPI reservation backend (self-built mock)
 ├── agent/                    # (M3) LangGraph orchestrator
 ├── governance/               # (M4) audit log + human-approval gate
 ├── tests/

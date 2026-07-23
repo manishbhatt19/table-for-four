@@ -190,6 +190,36 @@ A cross-cutting layer records a structured entry for every consequential step:
 This yields an end-to-end trail explaining *why* the agent did what it did and *on
 what data* — directly addressing accountability and transparency requirements.
 
+### 6.5 Memory model
+The agent uses three distinct tiers of memory; naming them separately keeps their
+lifetimes and responsibilities clear.
+
+| Tier | Holds | Implementation | Milestone |
+|---|---|---|---|
+| **Working memory** | The in-flight request: parsed constraints, candidate restaurants, matched perks, the chosen option, the pending booking. | LangGraph **typed `State`** carried across nodes, persisted by a **checkpointer** keyed per conversation **thread**. Enables the human-gate **pause/resume**. | M3 / M4 |
+| **Long-term profile memory** | Member preferences: dietary defaults, favored cuisines/price, and past bookings. | A small **preferences store** keyed by user; read at `parse_request` to seed constraints, written after a successful booking. | Interface in M3; populated in M5 |
+| **Audit / episodic memory** | Every consequential event: tool call + args, data `source`, human approval/decline, booking outcome. | Append-only **governance log** (§6.4); doubles as booking history. | M4 |
+
+### 6.6 Control flow & reasoning loops
+The orchestrator is a **state graph**, not a single prompt — control flow is
+explicit and inspectable.
+
+- **Happy path (linear):** `parse_request → search → match_perks → rank_and_explain
+  → propose_booking → [human_gate] → book → audit`.
+- **Reasoning loops (conditional edges):** the graph can **refine and retry** — e.g.
+  if `search`/`match_perks` return nothing that satisfies the constraints,
+  `rank_and_explain` may relax or rewrite the query and route **back** to `search`.
+  A **max-iteration guard** bounds this so the loop cannot spin. This
+  refine-retry cycle is where the agent's reasoning is exercised, beyond a single
+  linear pass.
+- **Human interrupt:** at `human_gate` the graph **interrupts** and waits; on
+  approval it **resumes** from the checkpoint, on decline it routes back to
+  selection. The pause/resume is powered by the working-memory checkpointer.
+- **Tools as a registry:** each capability is an independent **MCP server** and the
+  orchestrator is an **MCP client**. Adding a capability means adding a server, not
+  rewriting the graph. Current tools: `search_restaurants` (M1), `find_perks`
+  (M2.5), and `check_availability` / `create_booking` (M2).
+
 ---
 
 ## 7. Data strategy
@@ -232,9 +262,9 @@ dietary/occasion themes (to give semantic retrieval real signal).
 | # | Milestone | State |
 |---|---|---|
 | 1 | Search MCP server (Google Places, offline-testable) | ✅ Complete |
-| 2 | Mock booking FastAPI + booking MCP server | ⬜ Next |
+| 2 | Mock booking FastAPI + booking MCP server | ✅ Complete |
 | 2.5 | **Perks / RAG:** synthetic perks → Chroma → `find_perks` MCP tool | ✅ Complete |
-| 3 | LangGraph orchestrator; end-to-end happy path (search → perks → book) | ⬜ |
+| 3 | LangGraph orchestrator; end-to-end happy path (search → perks → book) | ⬜ Next |
 | 4 | Human-in-the-loop gate + governance/audit logging | ⬜ |
 | 5 | *(Stretch)* member preferences, model comparison, **illustrative restaurant imagery**, polished demo | ⬜ |
 
