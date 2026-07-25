@@ -35,8 +35,8 @@ pattern for agent prototyping against partner-gated downstream systems.
 | 1 — Search MCP server (Google Places, offline-testable) | ✅ working |
 | 2 — Mock booking FastAPI + booking MCP server | ✅ working |
 | 2.5 — Perks/RAG: synthetic perks → Chroma → `find_perks` MCP tool | ✅ working |
-| 3 — LangGraph orchestrator, end-to-end happy path | ⬜ next |
-| 4 — Human-in-loop gate + governance/audit logging | ⬜ |
+| 3 — LangGraph orchestrator, end-to-end happy path | ✅ working |
+| 4 — Human-in-loop gate + governance/audit logging | ⬜ next |
 | 5 (stretch) — member preferences, model comparison, illustrative imagery, demo | ⬜ |
 
 ## Getting started
@@ -66,6 +66,22 @@ uv run mcp_servers/search_server.py
 
 To enable live data, see [docs/google_places_setup.md](docs/google_places_setup.md).
 
+### Run the concierge (M3)
+
+The orchestrator chains search → perks → booking through a LangGraph state machine
+with a refine-retry loop and per-thread working memory. Run it end-to-end:
+
+```bash
+uv run python -m agent                                  # default sample request
+uv run python -m agent "Italian for 4, Friday 7pm"      # custom request
+uv run python -m agent --heuristic "sushi for 2"        # force offline mode
+```
+
+It prints the full reasoning trace and the booking confirmation. With an
+`OPENAI_API_KEY` (or OpenRouter) set in `.env` it uses the LLM to parse the request
+and write the confirmation; with no key it runs a deterministic heuristic path, so
+the whole loop works offline.
+
 ## Repo layout
 
 ```
@@ -77,6 +93,12 @@ table-for-four/
 │   ├── booking_server.py     # ✅ booking tools over the mock backend (MCP)
 │   └── fixtures/             # offline fixtures: places + perks_seed.json
 ├── mock_booking_api/         # ✅ FastAPI reservation backend (self-built mock)
+├── agent/                    # ✅ (M3) LangGraph orchestrator
+│   ├── graph.py              #     state machine + refine-retry loop + checkpointer
+│   ├── reasoning.py          #     heuristic + LLM parse / rank / narrate
+│   ├── tools.py              #     in-process MCP tool registry
+│   ├── config.py             #     provider-agnostic LLM loader (OpenAI/OpenRouter)
+│   └── __main__.py           #     `python -m agent` demo CLI
 ├── agent/                    # (M3) LangGraph orchestrator
 ├── governance/               # (M4) audit log + human-approval gate
 ├── tests/

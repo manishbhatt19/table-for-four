@@ -19,7 +19,7 @@ The final submission is graded on more than working code. All of these are requi
 | # | Deliverable | State |
 |---|---|---|
 | A | **Context + architecture walkthrough** (written/spoken) | 🟡 design doc drafted; needs final polish + narration |
-| B | **Recorded demo video** — full end-to-end loop on screen | ⬜ record after M3/M4 |
+| B | **Recorded demo video** — full end-to-end loop on screen | 🟡 command ready: `uv run python -m agent`; record after M4 gate |
 | C | **Attached document** — `docs/project_scoping_and_design.md` → PDF | 🟡 living master done; export final PDF near end |
 | D | **GitHub repo link** (shareable) | ⬜ publish (private) via GitHub Desktop; get link |
 | E | **Recorded video link** attached with submission | ⬜ after B |
@@ -35,9 +35,28 @@ command/flow runs: request → search → perks → human approval → booking c
 | 1 — Search MCP server (Google Places, offline-testable) | ✅ Done |
 | 2 — Mock booking FastAPI + booking MCP server | ✅ Done |
 | 2.5 — Perks/RAG (synthetic perks → Chroma → `find_perks`) | ✅ Done |
-| 3 — LangGraph orchestrator, end-to-end happy path | ⬜ Next |
-| 4 — Human-in-loop gate + governance/audit logging | ⬜ |
+| 3 — LangGraph orchestrator, end-to-end happy path | ✅ Done |
+| 4 — Human-in-loop gate + governance/audit logging | ⬜ Next |
 | 5 (stretch) — member preferences, model comparison, illustrative imagery, demo | ⬜ |
+
+### Milestone 3 — LangGraph orchestrator (done)
+- `agent/graph.py` — the concierge **state machine**: `parse → search → (refine ⟲
+  search)* → match_perks → rank → propose → gate → book → audit`. Working memory is
+  `ConciergeState` persisted by a **MemorySaver checkpointer** per thread; a
+  **conditional refine-retry loop** (guarded by `MAX_ITERATIONS`) relaxes
+  constraints and re-searches when a query returns nothing.
+- `agent/reasoning.py` — **LLM + heuristic duality**: LLM (when a key is set) parses
+  the request and writes the confirmation; a deterministic rule-based path runs
+  otherwise, so the whole loop works offline. Ranking prefers a restaurant that has
+  a matched perk, then rating.
+- `agent/tools.py` — in-process **tool registry** (search / perks / booking).
+- `agent/config.py` — provider-agnostic LLM loader (OpenAI or OpenRouter via `.env`).
+- `agent/__main__.py` — `uv run python -m agent [request]` demo CLI (prints the
+  reasoning trace + confirmation) — **the narratable command for the demo video**.
+- `tests/test_orchestrator.py` — 5 offline end-to-end tests (heuristic mode),
+  including a refine-loop test. Full suite: **24 passing**.
+- The `gate` node auto-approves in M3 (placeholder); M4 makes it a real human
+  interrupt + the governance/audit trail.
 
 ### Milestone 2 — Mock booking (done)
 - `mock_booking_api/app.py` — self-built **FastAPI** reservation service:
