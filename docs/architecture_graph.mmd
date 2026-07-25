@@ -1,0 +1,32 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	parse(parse)
+	search(search)
+	refine(refine)
+	match_perks(match_perks)
+	rank(rank)
+	propose(propose)
+	gate(gate)
+	book(book)
+	audit(audit)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> parse;
+	book --> audit;
+	gate -. &nbsp;end&nbsp; .-> __end__;
+	gate -.-> book;
+	match_perks --> rank;
+	parse --> search;
+	propose --> gate;
+	rank --> propose;
+	refine --> search;
+	search -.-> match_perks;
+	search -.-> refine;
+	audit --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
