@@ -12,6 +12,22 @@ real restaurant data, reasons over fit, and books a table through a self-built
 mock reservation service — with a human-in-the-loop confirmation step and a full
 governance/audit trail.
 
+## Capstone submission deliverables (don't lose track)
+
+The final submission is graded on more than working code. All of these are required:
+
+| # | Deliverable | State |
+|---|---|---|
+| A | **Context + architecture walkthrough** (written/spoken) | 🟡 design doc drafted; needs final polish + narration |
+| B | **Recorded demo video** — full end-to-end loop on screen | ⬜ record after M3/M4 |
+| C | **Attached document** — `docs/project_scoping_and_design.md` → PDF | 🟡 living master done; export final PDF near end |
+| D | **GitHub repo link** (shareable) | ⬜ publish (private) via GitHub Desktop; get link |
+| E | **Recorded video link** attached with submission | ⬜ after B |
+
+**Build implication:** keep a single, narratable **end-to-end happy path** runnable
+at every step so the demo (B) is always recordable. When M3 lands, ensure one
+command/flow runs: request → search → perks → human approval → booking confirmation.
+
 ## Milestone status
 
 | Milestone | State |
