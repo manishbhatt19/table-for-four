@@ -268,6 +268,21 @@ dietary/occasion themes (to give semantic retrieval real signal).
 | 4 | Human-in-the-loop gate + governance/audit logging | ⬜ Next |
 | 5 | *(Stretch)* member preferences, model comparison, **illustrative restaurant imagery**, polished demo | ⬜ |
 
+### 9.2 Web enrichment via Tavily *(planned, after M4)*
+An optional **live-mode** enrichment tool (`enrich_restaurant`) that uses Tavily web
+search to add *qualitative* context Google Places doesn't provide — recent reviews,
+signature dishes, ambiance, dietary reputation, press/awards — to strengthen the
+ranking rationale and the recommendation narrative.
+- **Scope:** enrichment only; it does **not** replace Places for core search (Places
+  is more structured for constraint matching).
+- **Live-only:** the fixture restaurants are fictional, so web search has nothing
+  true to find offline; the tool runs only against real (live Places) results, and
+  the graph still works without it.
+- **Representational integrity:** cite sources and attribute snippets to the correct
+  venue — never mix web context from a different restaurant.
+- **Sequencing:** after M4 (the core responsible-AI loop); belongs with the M5
+  enhancements.
+
 ### 9.1 Milestone 5 — illustrative restaurant imagery *(stretch)*
 A UX-polish layer that shows a representative image alongside each option to make
 the concierge feel richer in the demo. Scoped deliberately to respect
