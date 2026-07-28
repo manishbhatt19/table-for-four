@@ -206,8 +206,8 @@ def audit_node(state: ConciergeState) -> dict[str, Any]:
 
 # --- Graph -------------------------------------------------------------------
 
-def build_graph(checkpointer: Any | None = None):
-    """Build and compile the concierge graph. Pass a checkpointer for persistence."""
+def build_state_graph() -> StateGraph:
+    """Assemble the (uncompiled) concierge StateGraph — nodes and edges."""
     g = StateGraph(ConciergeState)
     g.add_node("parse", parse_node)
     g.add_node("search", search_node)
@@ -230,8 +230,17 @@ def build_graph(checkpointer: Any | None = None):
     g.add_conditional_edges("gate", route_after_gate, {"book": "book", "end": END})
     g.add_edge("book", "audit")
     g.add_edge("audit", END)
+    return g
 
-    return g.compile(checkpointer=checkpointer or MemorySaver())
+
+def build_graph(checkpointer: Any | None = None):
+    """Build and compile the concierge graph. Pass a checkpointer for persistence."""
+    return build_state_graph().compile(checkpointer=checkpointer or MemorySaver())
+
+
+# Entry point for LangGraph Studio / `langgraph dev`: the platform supplies its own
+# persistence, so we hand it the uncompiled builder (no in-code checkpointer).
+studio_graph = build_state_graph()
 
 
 def run_concierge(

@@ -17,3 +17,7 @@ wheels/
 
 # Perks vector store (regenerable from fixtures/perks_seed.json)
 mcp_servers/.chroma_perks/
+
+# LangGraph dev server / Studio artifacts
+.langgraph_api/
+.langgraph/

@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "concierge": "./agent/graph.py:studio_graph"
+  },
+  "env": ".env"
+}
