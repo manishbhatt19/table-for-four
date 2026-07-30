@@ -33,6 +33,16 @@ def test_min_rating_filter():
     )
 
 
+def test_cuisine_filter_excludes_other_cuisines():
+    # An Italian request must not return the French bistro — cuisine is a hard filter.
+    out = search_restaurants(query="dinner for four", cuisine="italian")
+    assert out["result_count"] >= 1
+    types = {t for r in out["results"] for t in (r["types"] or [])}
+    assert "italian_restaurant" in types
+    assert "french_restaurant" not in types
+    assert all("Bistro" not in (r["name"] or "") for r in out["results"])
+
+
 if __name__ == "__main__":
     # Allow `uv run tests/test_search_server.py` as a quick manual check.
     import json

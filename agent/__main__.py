@@ -1,25 +1,45 @@
-"""Runnable concierge demo — the single command to drive the full loop.
+"""Runnable concierge demos — the commands to drive the agent.
 
-Usage:
+One-shot booking loop (offline-capable):
     uv run python -m agent                       # default sample request
     uv run python -m agent "sushi for 2 friday"  # custom request
     uv run python -m agent --guest "Manish" "Italian for 4 friday 7pm"
 
-Runs the LangGraph orchestrator end-to-end and prints the reasoning trace and the
-final confirmation. Uses the LLM automatically if a key is configured in .env,
-otherwise the deterministic heuristic path (shown as MODE).
+Interpersonal chat concierge (needs an OpenAI key; remembers guests in Chroma):
+    uv run python -m agent chat
+    uv run python -m agent chat --name "Manish"
+
+The one-shot form runs the LangGraph orchestrator end-to-end and prints the
+reasoning trace and the final confirmation. It uses the LLM automatically if a key
+is configured in .env, otherwise the deterministic heuristic path (shown as MODE).
 """
 
 from __future__ import annotations
 
 import argparse
+import sys
 
 from agent.graph import run_concierge
 
 DEFAULT_REQUEST = "Italian, near Midtown, 4 people, Friday 7pm, one guest is gluten-free"
 
 
+def _chat(argv: list[str]) -> None:
+    from agent.concierge_chat import run_chat
+
+    ap = argparse.ArgumentParser(prog="agent chat", description="Interpersonal concierge chat")
+    ap.add_argument("--name", default=None, help="guest name/handle (else prompted)")
+    args = ap.parse_args(argv)
+    run_chat(name=args.name)
+
+
 def main() -> None:
+    # `chat` subcommand routes to the conversational front-end; anything else is
+    # treated as a one-shot dining request (preserving the original usage).
+    if len(sys.argv) > 1 and sys.argv[1] == "chat":
+        _chat(sys.argv[2:])
+        return
+
     ap = argparse.ArgumentParser(description="Table for Four — concierge demo")
     ap.add_argument("request", nargs="?", default=DEFAULT_REQUEST, help="dining request")
     ap.add_argument("--guest", default="Guest", help="name for the reservation")

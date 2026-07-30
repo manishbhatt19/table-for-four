@@ -20,9 +20,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-@lru_cache(maxsize=1)
-def get_llm() -> Any | None:
-    """Return a configured chat model, or None if no API key is set."""
+def _build_llm(temperature: float) -> Any | None:
+    """Construct a chat model from `.env` at the given temperature, or None."""
     provider = os.getenv("LLM_PROVIDER", "openai").strip().lower()
 
     if provider == "openrouter":
@@ -41,7 +40,26 @@ def get_llm() -> Any | None:
     # Imported lazily so the project runs without langchain when staying offline.
     from langchain_openai import ChatOpenAI
 
-    kwargs: dict[str, Any] = {"model": model, "api_key": key, "temperature": 0}
+    kwargs: dict[str, Any] = {"model": model, "api_key": key, "temperature": temperature}
     if base_url:
         kwargs["base_url"] = base_url
     return ChatOpenAI(**kwargs)
+
+
+@lru_cache(maxsize=1)
+def get_llm() -> Any | None:
+    """Return a configured chat model (temperature 0), or None if no key is set.
+
+    Temperature 0 keeps the orchestrator's parse/narrate deterministic.
+    """
+    return _build_llm(temperature=0.0)
+
+
+@lru_cache(maxsize=1)
+def get_chat_llm() -> Any | None:
+    """Return a warmer chat model for the interpersonal concierge, or None.
+
+    The conversational front-end wants some personality, so it runs a little
+    warmer than the deterministic orchestrator path.
+    """
+    return _build_llm(temperature=0.6)

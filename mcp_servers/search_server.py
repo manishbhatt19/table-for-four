@@ -82,13 +82,40 @@ def _normalize_place(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# A few cuisines whose Google `type` doesn't literally contain the requested word,
+# so a hard cuisine filter still matches them. Everything else matches by substring.
+_CUISINE_ALIASES = {
+    "sushi": ("sushi", "japanese"),
+    "japanese": ("japanese", "sushi"),
+}
+
+
+def _matches_cuisine(r: dict[str, Any], cuisine: str | None) -> bool:
+    """True if the restaurant plausibly serves the requested cuisine.
+
+    Matches the cuisine word (or an alias) against the place's Google `types`,
+    `primary_type`, or name — e.g. "italian" keeps `italian_restaurant` but drops
+    `french_restaurant`. With no cuisine given, everything passes.
+    """
+    if not cuisine:
+        return True
+    tokens = _CUISINE_ALIASES.get(cuisine.lower(), (cuisine.lower(),))
+    haystack = " ".join(
+        [r.get("primary_type") or "", " ".join(r.get("types") or []), r.get("name") or ""]
+    ).lower()
+    return any(tok in haystack for tok in tokens)
+
+
 def _passes_filters(
     r: dict[str, Any],
     *,
+    cuisine: str | None,
     max_price_level: int | None,
     min_rating: float | None,
     open_now: bool | None,
 ) -> bool:
+    if not _matches_cuisine(r, cuisine):
+        return False
     if max_price_level is not None and r["price_level"] is not None:
         if r["price_level"] > max_price_level:
             return False
@@ -151,7 +178,8 @@ def search_restaurants(
 
     Args:
         query: Free-text dining request (e.g. "Italian dinner near Midtown").
-        cuisine: Optional cuisine hint appended to the query (e.g. "italian").
+        cuisine: Optional cuisine (e.g. "italian"). Added to the query AND applied
+            as a hard filter — results must match the cuisine (by Google type/name).
         location: Optional location hint appended to the query (e.g. "Midtown NYC").
         max_price_level: Keep results at or below this price tier (0=free .. 4=very expensive).
         min_rating: Keep results at or above this Google rating (0.0-5.0).
@@ -184,6 +212,7 @@ def search_restaurants(
         for r in results
         if _passes_filters(
             r,
+            cuisine=cuisine,
             max_price_level=max_price_level,
             min_rating=min_rating,
             open_now=open_now,

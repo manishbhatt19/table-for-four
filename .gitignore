@@ -18,6 +18,9 @@ wheels/
 # Perks vector store (regenerable from fixtures/perks_seed.json)
 mcp_servers/.chroma_perks/
 
+# Member profile store (per-user long-term memory; may contain personal data)
+agent/.chroma_profiles/
+
 # LangGraph dev server / Studio artifacts
 .langgraph_api/
 .langgraph/
