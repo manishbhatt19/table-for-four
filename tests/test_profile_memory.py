@@ -138,53 +138,93 @@ def test_email_must_come_from_a_guest_message(monkeypatch):
     assert accepted["email"] == "real.guest@example.com"
 
 
+def _listed(session, place_id="p1", name="Osteria", perk_id=None):
+    session.recommendations = {place_id: {"place_id": place_id, "name": name, "perk_id": perk_id}}
+
+
 def test_book_is_idempotent_per_request(monkeypatch):
-    # An identical request must not create a second reservation.
+    # An identical booking must not create a second reservation.
     import json as _json
 
     import agent.concierge_chat as cc
 
     calls = {"n": 0}
 
-    def fake_run(request, **_kw):
+    def fake_create(**_kw):
         calls["n"] += 1
-        return {
-            "narrative": "Booked!",
-            "booking": {"confirmation_id": f"TF4-000{calls['n']}"},
-            "chosen": {"restaurant": {"name": "Osteria"}},
-        }
+        return {"booked": True, "confirmation_id": f"TF4-000{calls['n']}", "booking": {}}
 
-    monkeypatch.setattr(cc, "run_concierge", fake_run)
-    # Real remember() returns the merged profile (still carrying the email); model it.
-    monkeypatch.setattr(cc.profile_memory, "remember", lambda *a, **k: {"email": "g@x.com"})
+    monkeypatch.setattr(cc, "create_booking", fake_create)
+    monkeypatch.setattr(cc.profile_memory, "remember", lambda *a, **k: {"email": "g@x.com", "party_size": 4})
 
-    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
-    args = {"cuisine": "italian", "party_size": 4, "date": "Friday", "time": "7pm"}
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com", "party_size": 4})
+    _listed(session)
+    args = {"place_id": "p1", "date": "2026-08-07", "time": "19:00", "party_size": 4}
 
     first = _json.loads(cc._handle_book(session, args))
     second = _json.loads(cc._handle_book(session, args))
 
-    assert first["confirmation_id"] == "TF4-0001"
+    assert first["status"] == "booked" and first["confirmation_id"] == "TF4-0001"
     assert second["status"] == "already_booked"
     assert second["confirmation_id"] == "TF4-0001"
-    assert calls["n"] == 1  # pipeline ran exactly once
+    assert calls["n"] == 1  # booking backend hit exactly once
 
 
 def test_book_is_gated_on_email(monkeypatch):
     # book_table must refuse until a confirmation email is on file — and must NOT
-    # invoke the booking pipeline when it refuses.
+    # hit the booking backend when it refuses.
     import json as _json
 
     import agent.concierge_chat as cc
 
     called = {"n": 0}
-    monkeypatch.setattr(cc, "run_concierge", lambda *a, **k: called.__setitem__("n", called["n"] + 1) or {})
+    monkeypatch.setattr(cc, "create_booking", lambda **k: called.__setitem__("n", called["n"] + 1) or {})
 
     session = cc.ConciergeSession(member_id="manish", profile={"name": "Manish"})
-    out = _json.loads(cc._handle_book(session, {"cuisine": "italian", "party_size": 4}))
+    _listed(session)
+    out = _json.loads(cc._handle_book(session, {"place_id": "p1", "date": "Friday", "time": "19:00"}))
 
     assert out["status"] == "email_required"
-    assert called["n"] == 0  # pipeline never ran
+    assert called["n"] == 0
+
+
+def test_book_rejects_a_restaurant_not_in_recommendations():
+    # The model cannot book a place that was never surfaced to the guest.
+    import json as _json
+
+    import agent.concierge_chat as cc
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    _listed(session)  # only p1 is listed
+    out = _json.loads(cc._handle_book(session, {"place_id": "ghost", "date": "Friday", "time": "19:00"}))
+    assert out["status"] == "unknown_restaurant"
+
+
+def test_recommend_filters_cuisine_and_flags_perks():
+    # Uses the real (offline) search + perks fixtures.
+    import json as _json
+
+    import agent.concierge_chat as cc
+
+    session = cc.ConciergeSession(member_id="g")
+    out = _json.loads(cc._handle_recommend(
+        session, {"cuisine": "italian", "party_size": 4, "date": "Friday", "keywords": "family dinner"}
+    ))
+    assert out["status"] == "ok"
+    names = {r["name"] for r in out["recommendations"]}
+    assert names and "Le Petit Bistro" not in names          # cuisine is a hard filter
+    assert session.recommendations                            # stored for the next step
+    assert isinstance(out["restaurants_with_perks"], list)
+
+
+def test_check_times_requires_a_listed_restaurant():
+    import json as _json
+
+    import agent.concierge_chat as cc
+
+    session = cc.ConciergeSession(member_id="g")
+    out = _json.loads(cc._handle_times(session, {"place_id": "ghost", "date": "Friday"}))
+    assert out["status"] == "unknown_restaurant"
 
 
 def test_profile_summary_mentions_key_facts():

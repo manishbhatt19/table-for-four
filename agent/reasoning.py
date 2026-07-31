@@ -74,6 +74,22 @@ def _parse_time(text: str) -> str | None:
     return None
 
 
+def resolve_date(text: str, ref: date | None = None) -> tuple[str, str]:
+    """Resolve a free-text or ISO date to `(iso_date, day_abbr)`.
+
+    Accepts an explicit `YYYY-MM-DD` or a relative day ("friday", "tomorrow").
+    Falls back to the next Friday when nothing is recognized (same rule the
+    request parser uses).
+    """
+    ref = ref or date.today()
+    t = (text or "").strip().lower()
+    m = re.match(r"(\d{4}-\d{2}-\d{2})", t)
+    if m:
+        iso = m.group(1)
+        return iso, _DAY_ABBR[date.fromisoformat(iso).weekday()]
+    return _parse_date(t, ref)
+
+
 def _heuristic_parse(request: str, ref: date) -> dict[str, Any]:
     text = request.lower()
     iso_date, day = _parse_date(text, ref)
