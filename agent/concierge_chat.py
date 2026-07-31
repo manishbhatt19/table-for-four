@@ -78,8 +78,10 @@ back to the table. Never answer the off-topic question, even partially.
    `remember_guest_details` as they arrive. Ask for the email as part of this,
    framed as where to send the confirmation.
 4. **Recommend** — call `recommend_restaurants` and present a short shortlist.
-   Clearly mention which one or two carry a **special perk** (offer), by name.
-   Only ever mention restaurants the tool returned.
+   Clearly mention which one or two carry a **special perk** (offer), by name. If
+   the result includes a `perk_note` saying the perks are samples, present those as
+   a "sample partner offer" so the guest knows it's illustrative. Only ever mention
+   restaurants the tool returned.
 5. **Guest picks one** → call `check_availability_times` and tell them the open
    times for that restaurant and date. Only offer times the tool returned.
 6. **Book** — once they choose an available time, call `book_table`. If there's no
@@ -349,6 +351,15 @@ def _handle_recommend(session: ConciergeSession, args: dict[str, Any]) -> str:
         min_rating=args.get("min_rating"),
     )
     candidates = search.get("results", [])
+    # An over-specific keyword string can zero out live results; retry once with a
+    # minimal query so we keep the requested cuisine instead of dropping it.
+    if not candidates and (cuisine or args.get("location")):
+        search = search_restaurants(
+            query=cuisine or "restaurant",
+            cuisine=cuisine,
+            location=args.get("location"),
+        )
+        candidates = search.get("results", [])
     if not candidates:
         return json.dumps({
             "status": "no_matches",
@@ -379,18 +390,38 @@ def _handle_recommend(session: ConciergeSession, args: dict[str, Any]) -> str:
             "rating": c.get("rating"),
             "price_level": c.get("price_level"),
             "has_perk": bool(perk),
+            "perk_sample": False,
             "perk_title": (perk or {}).get("title"),
             "perk_id": (perk or {}).get("perk_id"),
         }
         recs.append(rec)
         session.recommendations[c["place_id"]] = rec
 
-    return json.dumps({
+    # Live restaurants have real Google ids that our synthetic (fixture-keyed) perks
+    # can't match, so nothing gets flagged. In that case attach a cuisine-matched
+    # SAMPLE offer to the top 1-2 recommendations — clearly labeled illustrative.
+    if not any(r["has_perk"] for r in recs):
+        sample = find_perks(query=keywords, place_ids=None, party_size=party_size, day=day).get("results", [])
+        for rec, perk in zip(recs[:2], sample[:2]):
+            rec["has_perk"] = True
+            rec["perk_sample"] = True
+            rec["perk_title"] = perk.get("title")
+            rec["perk_id"] = perk.get("perk_id")
+
+    perked = [r["name"] for r in recs if r["has_perk"]]
+    uses_samples = any(r["has_perk"] and r["perk_sample"] for r in recs)
+    payload: dict[str, Any] = {
         "status": "ok",
         "source": search.get("source"),
         "recommendations": recs,
-        "restaurants_with_perks": [r["name"] for r in recs if r["has_perk"]],
-    }, ensure_ascii=False)
+        "restaurants_with_perks": perked,
+    }
+    if uses_samples:
+        payload["perk_note"] = (
+            "These are SAMPLE partner offers (illustrative, not the restaurant's real "
+            "promotion). Present them as a 'sample partner offer' when you mention them."
+        )
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _handle_times(session: ConciergeSession, args: dict[str, Any]) -> str:

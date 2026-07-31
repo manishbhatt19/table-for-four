@@ -217,6 +217,39 @@ def test_recommend_filters_cuisine_and_flags_perks():
     assert isinstance(out["restaurants_with_perks"], list)
 
 
+def test_recommend_attaches_sample_perks_on_live_data(monkeypatch):
+    # On live data, real Google ids don't match fixture-keyed perks — so 1-2 top
+    # recommendations should get a clearly-labeled SAMPLE offer instead.
+    import json as _json
+
+    import agent.concierge_chat as cc
+
+    monkeypatch.setattr(cc, "search_restaurants", lambda **_k: {"source": "live", "results": [
+        {"place_id": "ChIJ_a", "name": "Real Italian A", "primary_type": "italian_restaurant", "rating": 4.8},
+        {"place_id": "ChIJ_b", "name": "Real Italian B", "primary_type": "italian_restaurant", "rating": 4.6},
+        {"place_id": "ChIJ_c", "name": "Real Italian C", "primary_type": "italian_restaurant", "rating": 4.5},
+    ]})
+
+    def fake_find_perks(query, place_ids=None, **_k):
+        if place_ids:  # nothing matches the live ids
+            return {"results": []}
+        return {"results": [
+            {"perk_id": "perk-1", "place_id": "fixture-x", "title": "Aperitivo Welcome", "similarity": 0.9},
+            {"perk_id": "perk-2", "place_id": "fixture-y", "title": "Weekend Family Feast", "similarity": 0.8},
+        ]}
+
+    monkeypatch.setattr(cc, "find_perks", fake_find_perks)
+
+    session = cc.ConciergeSession(member_id="p")
+    out = _json.loads(cc._handle_recommend(session, {"cuisine": "italian", "keywords": "italian dinner"}))
+
+    perked = [r for r in out["recommendations"] if r["has_perk"]]
+    assert 1 <= len(perked) <= 2
+    assert all(r["perk_sample"] for r in perked)     # labeled as illustrative
+    assert "perk_note" in out                         # guest-facing sample disclaimer
+    assert out["restaurants_with_perks"]
+
+
 def test_check_times_requires_a_listed_restaurant():
     import json as _json
 
