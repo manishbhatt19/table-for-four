@@ -207,17 +207,23 @@ def search_restaurants(
         source = "fixture"
         results = _search_fixture(effective_query)
 
-    results = [
+    # Apply price/rating/open filters first, then cuisine. If the cuisine filter
+    # would empty the list (live data often types a place generically as
+    # "restaurant"), fall back to the pre-cuisine set — the cuisine word was
+    # already in the text query, so Google's relevance still stands.
+    base = [
         r
         for r in results
         if _passes_filters(
             r,
-            cuisine=cuisine,
+            cuisine=None,
             max_price_level=max_price_level,
             min_rating=min_rating,
             open_now=open_now,
         )
-    ][:max_results]
+    ]
+    with_cuisine = [r for r in base if _matches_cuisine(r, cuisine)]
+    results = (with_cuisine or base)[:max_results]
 
     return {
         "source": source,
