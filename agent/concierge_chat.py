@@ -73,10 +73,11 @@ back to the table. Never answer the off-topic question, even partially.
    member, welcome them back by name and offer to reuse their usual preferences.
 2. **Understand their intent** — what kind of outing is this?
 3. **Gather what's missing** (only what wasn't already said): their email, the
-   date/time, party size, location/area, cuisine, and any dietary needs or kids
-   (with ages / high-chair needs). Save durable details with
-   `remember_guest_details` as they arrive. Ask for the email as part of this,
-   framed as where to send the confirmation.
+   date/time, **party size (how many people) — this is required**, location/area,
+   cuisine, and any dietary needs or kids (with ages / high-chair needs). Save
+   durable details with `remember_guest_details` as they arrive. Ask for the email
+   as part of this, framed as where to send the confirmation. Do NOT assume a party
+   size — if the guest hasn't told you how many people, ask before you book.
 4. **Recommend** — call `recommend_restaurants` and present a short shortlist.
    Clearly mention which one or two carry a **special perk** (offer), by name. If
    the result includes a `perk_note` saying the perks are samples, present those as
@@ -84,10 +85,13 @@ back to the table. Never answer the off-topic question, even partially.
    restaurants the tool returned.
 5. **Guest picks one** → call `check_availability_times` and tell them the open
    times for that restaurant and date. Only offer times the tool returned.
-6. **Book** — once they choose an available time, call `book_table`. If there's no
-   availability, or they want something different, gather the new detail and go
-   back to step 4/5 (recommend or check times again) and offer an alternative.
-   Never claim a booking is made until `book_table` returns a confirmation id.
+6. **Book** — once they choose an available time, call `book_table`. Before
+   booking you MUST have three things confirmed by the guest: the **date**, the
+   **time**, and the **party size**. If any is missing, ask for it first — never
+   guess or default the party size. If there's no availability, or they want
+   something different, gather the new detail and go back to step 4/5 (recommend or
+   check times again) and offer an alternative. Never claim a booking is made until
+   `book_table` returns a confirmation id.
 7. **After booking**, share 2–3 brief, practical **dining tips** so they're
    prepared (e.g. arrive a few minutes early, mention the reservation name and any
    dietary need to the host, note the perk at the table). Keep tips general — do
@@ -224,8 +228,9 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "description": (
                 "Book a specific restaurant at a specific available time. The "
                 "restaurant must be from the latest recommendations, the time must be "
-                "one that check_availability_times returned, and the guest's email "
-                "must already be saved."
+                "one that check_availability_times returned, the party size must be "
+                "one the guest actually gave you (never guessed), and the guest's "
+                "email must already be saved."
             ),
             "parameters": {
                 "type": "object",
@@ -233,10 +238,10 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "place_id": {"type": "string"},
                     "date": {"type": "string"},
                     "time": {"type": "string", "description": "HH:MM, from the available times."},
-                    "party_size": {"type": "integer"},
+                    "party_size": {"type": "integer", "description": "How many people — required; ask the guest, do not assume."},
                     "special_requests": {"type": "string"},
                 },
-                "required": ["place_id", "date", "time"],
+                "required": ["place_id", "date", "time", "party_size"],
             },
         },
     },
@@ -482,12 +487,17 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
                            "message": "That date is in the past. Re-confirm the date with the guest."},
                           ensure_ascii=False)
     time = args["time"]
-    party_size = (
-        args.get("party_size")
-        or (session.availability or {}).get("party_size")
-        or profile.get("party_size")
-        or 2
-    )
+    # Party size is required and must be a real value the guest gave (or their saved
+    # usual) — never a silent default. Availability's party_size is NOT trusted here
+    # because check_availability_times may have used a placeholder.
+    party_size = args.get("party_size") or profile.get("party_size")
+    if not isinstance(party_size, int) or party_size < 1:
+        return json.dumps({
+            "status": "need_party_size",
+            "message": "No party size on file. Ask the guest how many people the "
+                       "booking is for and pass it as party_size — never guess or "
+                       "default it.",
+        }, ensure_ascii=False)
 
     # The time must be one we actually offered for this restaurant + date.
     pend = session.availability

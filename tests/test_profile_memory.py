@@ -200,6 +200,25 @@ def test_book_rejects_a_restaurant_not_in_recommendations():
     assert out["status"] == "unknown_restaurant"
 
 
+def test_book_requires_a_party_size(monkeypatch):
+    # book_table must refuse — never silently default — when no party size is known,
+    # and must NOT hit the booking backend when it refuses.
+    import json as _json
+
+    import agent.concierge_chat as cc
+
+    called = {"n": 0}
+    monkeypatch.setattr(cc, "create_booking", lambda **k: called.__setitem__("n", called["n"] + 1) or {})
+
+    # Email on file (passes the email gate) but no party size anywhere.
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    _listed(session)
+    out = _json.loads(cc._handle_book(session, {"place_id": "p1", "date": "2026-08-07", "time": "19:00"}))
+
+    assert out["status"] == "need_party_size"
+    assert called["n"] == 0  # booking backend never hit without a party size
+
+
 def test_recommend_filters_cuisine_and_flags_perks():
     # Uses the real (offline) search + perks fixtures.
     import json as _json
