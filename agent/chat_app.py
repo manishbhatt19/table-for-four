@@ -17,7 +17,16 @@ Run it:
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from typing import Any
+
+# Streamlit runs this file directly, so it puts `agent/` (the script's own dir) on
+# sys.path rather than the project root — which makes `import agent...` fail. Put
+# the project root (this file's parent's parent) first so the package resolves.
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 import streamlit as st
 
