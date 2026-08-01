@@ -82,6 +82,24 @@ It prints the full reasoning trace and the booking confirmation. With an
 and write the confirmation; with no key it runs a deterministic heuristic path, so
 the whole loop works offline.
 
+## Interpersonal concierge — Ava
+
+`agent/concierge_chat.py` is the warm, conversational front-end: Ava guides a guest
+through a full booking *journey* (understand intent → gather details → recommend →
+pick → check times → book → tips), keeping the guest in the loop at each choice and
+remembering them across sessions in Chroma. It needs an `OPENAI_API_KEY` (or
+OpenRouter) in `.env`.
+
+```bash
+uv run python -m agent chat                 # terminal REPL
+uv run python -m agent chat --name "Manish" # skip the name prompt
+uv run streamlit run agent/chat_app.py      # web chat UI (live memory panel)
+```
+
+The Streamlit UI (`agent/chat_app.py`) is a thin wrapper over the same session API
+(`start_session` + `_run_turn`) — the sidebar shows the guest's long-term profile
+filling in live from Chroma as they talk.
+
 ## Repo layout
 
 ```

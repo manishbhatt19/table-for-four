@@ -20,6 +20,7 @@ dev = [
     "langgraph-api>=0.11.0",
     "langgraph-cli[inmem]>=0.4.31",
     "pytest>=9.1.1",
+    "streamlit>=1.40.0",
 ]
 
 [tool.pytest.ini_options]
