@@ -87,6 +87,28 @@ def test_day_filter_excludes_weekday_only_perk(collection):
     assert "perk-nonna-02" not in {p["perk_id"] for p in perks}
 
 
+def test_semantic_weight_tunes_ranking(collection):
+    # Every result carries the blended score and its two component signals.
+    perks = query_perks(collection, "dinner", party_size=6, max_results=20, today=TODAY)
+    assert perks
+    assert all({"similarity", "metadata_fit", "score"} <= p.keys() for p in perks)
+
+    # At weight 1.0 the blend is pure semantic: score collapses onto similarity.
+    pure_semantic = query_perks(
+        collection, "dinner", party_size=6, max_results=20, semantic_weight=1.0, today=TODAY
+    )
+    assert all(p["score"] == p["similarity"] for p in pure_semantic)
+
+    # At weight 0.0 ranking is pure metadata-fit: for a party of six, a group offer
+    # (min_party_size == 6) fits best and rises to the top — a different #1 than the
+    # semantic ordering would pick.
+    pure_meta = query_perks(
+        collection, "dinner", party_size=6, max_results=20, semantic_weight=0.0, today=TODAY
+    )
+    assert pure_meta[0]["min_party_size"] == 6
+    assert pure_meta[0]["score"] >= pure_meta[-1]["score"]
+
+
 if __name__ == "__main__":
     import json
 

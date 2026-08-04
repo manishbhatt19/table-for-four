@@ -60,6 +60,12 @@ _METADATA_FIELDS = (
 
 _EMBED = embedding_functions.DefaultEmbeddingFunction()  # all-MiniLM-L6-v2, local
 
+# Default blend of the two retrieval signals: how much the *semantic* similarity
+# counts vs the structured *metadata* fit when ranking. Semantic-dominant by
+# default (the vector side is the point); dial down to let hard-constraint fit
+# (party snugness, day specificity) reorder more aggressively.
+DEFAULT_SEMANTIC_WEIGHT = 0.7
+
 mcp = FastMCP("restaurant-perks")
 
 _collection: Collection | None = None  # lazy persistent singleton
@@ -132,6 +138,32 @@ def _row_to_perk(pid: str, doc: str, meta: dict[str, Any], distance: float) -> d
     return perk
 
 
+def _metadata_fit(perk: dict[str, Any], party_size: int | None, day: str | None) -> float:
+    """Structured-fit score in [0,1] — the non-semantic half of the hybrid rank.
+
+    Rewards perks whose hard fields snugly match the request context: a group
+    offer for a group, a day-specific offer on that day. Neutral (0.5) for any
+    dimension the request doesn't constrain, so an unfiltered query is ranked on
+    semantics alone.
+    """
+    # Party snugness: min_party_size approaching the group's size fits better than
+    # a catch-all min-1 offer (a 6-top banquet is a great fit for six).
+    if party_size:
+        party = min(1.0, (perk.get("min_party_size") or 1) / party_size)
+    else:
+        party = 0.5
+
+    # Day specificity: an offer valid *specifically* on the requested day beats a
+    # generic any-day one (survivors are already filtered to be day-valid).
+    valid = perk.get("valid_days") or ""
+    if day:
+        day_fit = 1.0 if (valid and day in valid.split(",")) else 0.6
+    else:
+        day_fit = 0.5
+
+    return (party + day_fit) / 2.0
+
+
 def query_perks(
     collection: Collection,
     query: str,
@@ -140,9 +172,15 @@ def query_perks(
     party_size: int | None = None,
     day: str | None = None,
     max_results: int = 5,
+    semantic_weight: float = DEFAULT_SEMANTIC_WEIGHT,
     today: str | None = None,
 ) -> list[dict[str, Any]]:
     """Hybrid retrieval core: vector search + metadata filter + date/day post-filter.
+
+    Ranking blends two signals: the semantic `similarity` and a structured
+    `metadata_fit`, combined as
+    `score = semantic_weight * similarity + (1 - semantic_weight) * metadata_fit`.
+    `semantic_weight` is clamped to [0,1]; at 1.0 ranking is pure vector search.
 
     `today` (ISO date) is injectable for deterministic testing; defaults to the
     real current date.
@@ -167,6 +205,13 @@ def query_perks(
             p for p in perks
             if not p["valid_days"] or day in p["valid_days"].split(",")
         ]
+
+    # Hybrid re-rank: blend the semantic score with the structured-fit score.
+    w = max(0.0, min(1.0, semantic_weight))
+    for p in perks:
+        p["metadata_fit"] = round(_metadata_fit(p, party_size, day), 3)
+        p["score"] = round(w * p["similarity"] + (1.0 - w) * p["metadata_fit"], 3)
+    perks.sort(key=lambda p: p["score"], reverse=True)
     return perks[:n]
 
 
@@ -179,6 +224,7 @@ def find_perks(
     party_size: int | None = None,
     day: str | None = None,
     max_results: int = 5,
+    semantic_weight: float = DEFAULT_SEMANTIC_WEIGHT,
 ) -> dict[str, Any]:
     """Find restaurant perks (offers/coupons) matching a dining request.
 
@@ -194,11 +240,14 @@ def find_perks(
         party_size: Group size; excludes perks that require a larger party.
         day: Three-letter day (e.g. "Fri"); excludes perks not valid that day.
         max_results: Maximum perks to return (1-20).
+        semantic_weight: 0-1 blend of the semantic vs metadata-fit signals when
+            ranking (default 0.7, semantic-dominant; 1.0 = pure vector search).
 
     Returns:
         A dict with `source` ("synthetic"), the `query`, a `result_count`, and a
-        `results` list of matching perks, each with a 0-1 `similarity` score and
-        its structured fields (perk_type, discount_pct, min_party_size, expiry, …).
+        `results` list of matching perks, each with a 0-1 `similarity`, a
+        `metadata_fit`, the blended `score` it was ranked on, and its structured
+        fields (perk_type, discount_pct, min_party_size, expiry, …).
     """
     perks = query_perks(
         get_collection(),
@@ -207,6 +256,7 @@ def find_perks(
         party_size=party_size,
         day=day,
         max_results=max_results,
+        semantic_weight=semantic_weight,
     )
     return {
         "source": "synthetic",

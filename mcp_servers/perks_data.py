@@ -165,6 +165,127 @@ def generate_perks() -> list[dict[str, Any]]:
         ),
     ]
 
+    # --- Sakura Omakase (Japanese / sushi, very expensive) -------------------
+    perks += [
+        _perk(
+            "perk-sakura-01", "fixture-sakura-5", "Sakura Omakase",
+            "Omakase Chef's Counter",
+            "A multi-course omakase of nigiri and sashimi served at the sushi "
+            "counter by the chef — a refined, quiet Japanese tasting experience "
+            "for sushi lovers.",
+            perk_type="prix_fixe", min_party_size=1,
+        ),
+        _perk(
+            "perk-sakura-02", "fixture-sakura-5", "Sakura Omakase",
+            "Premium Sake Flight",
+            "A complimentary flight of premium junmai sake, hand-selected to pair "
+            "with the sushi menu — an elegant date-night pairing for two.",
+            perk_type="freebie", min_party_size=2,
+        ),
+    ]
+
+    # --- Taqueria La Luz (Mexican, inexpensive, lively) ----------------------
+    perks += [
+        _perk(
+            "perk-taqueria-01", "fixture-taqueria-6", "Taqueria La Luz",
+            "Taco Tuesday Fiesta",
+            "Half-price street tacos on a lively, casual Tuesday night — a fun, "
+            "budget-friendly group hang with friends.",
+            perk_type="percent_off", discount_pct=50,
+            min_party_size=4, valid_days="Tue",
+        ),
+        _perk(
+            "perk-taqueria-02", "fixture-taqueria-6", "Taqueria La Luz",
+            "Margarita Happy Hour",
+            "A complimentary house margarita during a buzzing happy hour — casual "
+            "drinks and small plates after work.",
+            perk_type="freebie", min_party_size=2,
+            valid_days="Mon,Tue,Wed,Thu,Fri",
+        ),
+    ]
+
+    # --- Spice Route (Indian, moderate, vegetarian-friendly) -----------------
+    perks += [
+        _perk(
+            "perk-spice-01", "fixture-spice-7", "Spice Route",
+            "Vegetarian Thali Feast",
+            "A discounted vegetarian thali of curries, dal, and fresh naan — a "
+            "hearty plant-forward Indian dinner full of bold, spicy flavor.",
+            perk_type="percent_off", discount_pct=20, min_party_size=2,
+        ),
+        _perk(
+            "perk-spice-02", "fixture-spice-7", "Spice Route",
+            "Group Curry Banquet",
+            "A shared family-style curry banquet for larger parties — great for "
+            "office groups and big celebrations with lots of dishes to pass.",
+            perk_type="percent_off", discount_pct=15, min_party_size=6,
+        ),
+        _perk(
+            "perk-spice-03", "fixture-spice-7", "Spice Route",
+            "Diwali Festival Menu (past)",
+            "A special Diwali festival tasting menu — a limited-time seasonal "
+            "celebration of regional sweets and specialties.",
+            perk_type="prix_fixe", expiry=_EXPIRED,
+        ),
+    ]
+
+    # --- The Prime Cut (steakhouse, expensive, business/celebration) ---------
+    perks += [
+        _perk(
+            "perk-primecut-01", "fixture-primecut-8", "The Prime Cut",
+            "Dry-Aged Steak & Cabernet",
+            "A complimentary glass of Cabernet with any dry-aged steak — a "
+            "classic, upscale steakhouse dinner for a special evening.",
+            perk_type="freebie", min_party_size=2,
+        ),
+        _perk(
+            "perk-primecut-02", "fixture-primecut-8", "The Prime Cut",
+            "Corporate Steakhouse Dinner",
+            "A private prix-fixe steakhouse dinner for larger parties — a polished "
+            "setting for corporate dinners, client entertaining, and business "
+            "celebrations.",
+            perk_type="prix_fixe", min_party_size=6,
+            valid_days="Mon,Tue,Wed,Thu,Fri",
+        ),
+    ]
+
+    # --- Bangkok Orchid (Thai, moderate, spicy, vegan options) ---------------
+    perks += [
+        _perk(
+            "perk-orchid-01", "fixture-orchid-9", "Bangkok Orchid",
+            "Vegan Thai Tasting",
+            "A plant-based Thai tasting of curries and noodles, entirely vegan and "
+            "made without fish sauce — fragrant, spicy, and dairy-free.",
+            perk_type="prix_fixe", min_party_size=2,
+        ),
+        _perk(
+            "perk-orchid-02", "fixture-orchid-9", "Bangkok Orchid",
+            "Weeknight Pad Thai Special",
+            "A discounted pad thai and spring-roll special on quiet weeknights — "
+            "an easy, casual dinner for two.",
+            perk_type="percent_off", discount_pct=20,
+            min_party_size=2, valid_days="Mon,Tue,Wed,Thu",
+        ),
+    ]
+
+    # --- Verdant (vegan / plant-based, moderate) -----------------------------
+    perks += [
+        _perk(
+            "perk-verdant-01", "fixture-verdant-10", "Verdant",
+            "Plant-Based Chef's Tasting",
+            "A seasonal chef's tasting of vegetable-forward, plant-based dishes — "
+            "a healthy, elegant vegan dinner for two.",
+            perk_type="prix_fixe", min_party_size=2,
+        ),
+        _perk(
+            "perk-verdant-02", "fixture-verdant-10", "Verdant",
+            "Farmers Market Weekend Brunch",
+            "A discounted weekend brunch built from the farmers market — bright, "
+            "healthy, vegetarian and vegan plates to share.",
+            perk_type="percent_off", discount_pct=15, valid_days="Sat,Sun",
+        ),
+    ]
+
     return perks
 
 
