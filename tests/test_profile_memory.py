@@ -16,6 +16,7 @@ from agent.profile_memory import (
     profile_summary,
     resolve_key,
     save_profile,
+    search_profiles,
     set_email,
     update_profile,
 )
@@ -35,6 +36,32 @@ def test_normalize_id_is_stable_and_slug_like():
 
 def test_unknown_member_returns_none(collection):
     assert load_profile(collection, "nobody") is None
+
+
+def test_search_profiles_empty_store_returns_nothing(collection):
+    assert search_profiles(collection, "anyone at all") == []
+
+
+def test_search_profiles_recalls_member_by_meaning(collection):
+    # Three members with distinct tastes, embedded via their profile summaries.
+    update_profile(collection, "wine@x.com", {
+        "name": "Giulia", "cuisines": ["Italian"],
+        "interests": ["Sicilian wine", "sommelier pairings"], "dining_atmosphere": "romantic",
+    })
+    update_profile(collection, "tacos@x.com", {
+        "name": "Diego", "cuisines": ["Mexican"], "interests": ["street tacos", "margaritas"],
+    })
+    update_profile(collection, "sushi@x.com", {
+        "name": "Aiko", "cuisines": ["Japanese"], "interests": ["omakase", "sake"],
+    })
+
+    hits = search_profiles(collection, "the guest who loves Sicilian wine")
+    assert hits, "expected a semantic match"
+    assert hits[0]["member_id"] == "wine@x.com"
+    assert hits[0]["name"] == "Giulia"
+    assert 0.0 <= hits[0]["similarity"] <= 1.0
+    # Ranked, best first.
+    assert all(hits[i]["similarity"] >= hits[i + 1]["similarity"] for i in range(len(hits) - 1))
 
 
 def test_save_and_load_roundtrip(collection):

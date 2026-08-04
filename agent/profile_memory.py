@@ -214,6 +214,36 @@ def set_email(
     return email_key, saved, was_returning
 
 
+# --- Semantic recall ---------------------------------------------------------
+
+def search_profiles(
+    collection: Collection, query: str, n_results: int = 5
+) -> list[dict[str, Any]]:
+    """Semantically recall members by free-text intent.
+
+    Each profile is stored with an embedded summary (see `profile_summary`), so a
+    query like "the guest who loves Sicilian wine" ranks members by meaning rather
+    than exact key. Returns `[{member_id, name, similarity, profile}]`, best first.
+    This is the profile store's second retrieval mode alongside key lookup — the
+    same Chroma + local-embeddings stack as the perks RAG, applied to memory.
+    """
+    count = collection.count()
+    if count == 0:
+        return []
+    res = collection.query(query_texts=[query], n_results=min(n_results, count))
+    out: list[dict[str, Any]] = []
+    for i, pid in enumerate(res["ids"][0]):
+        meta = res["metadatas"][0][i]
+        profile = json.loads(meta["profile_json"])
+        out.append({
+            "member_id": pid,
+            "name": meta.get("name") or profile.get("name"),
+            "similarity": round(1.0 - res["distances"][0][i], 3),  # cosine -> 0-1
+            "profile": profile,
+        })
+    return out
+
+
 # --- Persistent-singleton wrappers (used by the chat tools) ------------------
 
 def load(member_id: str) -> dict[str, Any] | None:
@@ -226,3 +256,7 @@ def remember(member_id: str, updates: dict[str, Any]) -> dict[str, Any]:
 
 def adopt_email(current_member_id: str, email: str) -> tuple[str, dict[str, Any], bool]:
     return set_email(get_collection(), current_member_id, email)
+
+
+def find_members(query: str, n_results: int = 5) -> list[dict[str, Any]]:
+    return search_profiles(get_collection(), query, n_results)
