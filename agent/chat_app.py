@@ -30,6 +30,7 @@ if str(_ROOT) not in sys.path:
 
 import streamlit as st
 
+from agent.calendar_invite import build_ics, ics_filename
 from agent.concierge_chat import (
     TOOL_SCHEMAS,
     ConciergeSession,
@@ -95,6 +96,55 @@ def _render_profile(profile: dict[str, Any] | None) -> None:
         st.caption(f"Profile saved to Chroma · updated {profile['updated_at']}")
 
 
+# --- Reservations & perks panel ----------------------------------------------
+
+def _render_reservations(session: ConciergeSession) -> None:
+    """Show this session's bookings — celebrate any perk, offer a calendar hold."""
+    bookings = [b for b in session.bookings.values() if b.get("confirmation_id")]
+    if not bookings:
+        return
+
+    st.subheader("🎟️ Reservations & perks")
+    cancelled = {
+        b.get("confirmation_id")
+        for b in ((session.profile or {}).get("past_bookings") or [])
+        if b.get("status") == "cancelled"
+    }
+
+    # A little celebration the first time a perked booking appears.
+    celebrated = st.session_state.setdefault("celebrated_perks", set())
+    fresh_perks = {
+        b["confirmation_id"] for b in bookings
+        if b.get("perk_applied") and b["confirmation_id"] not in cancelled
+    }
+    if fresh_perks - celebrated:
+        st.balloons()
+        celebrated |= fresh_perks
+
+    for b in bookings:
+        conf = b["confirmation_id"]
+        with st.container(border=True):
+            st.markdown(
+                f"**{b.get('restaurant', 'Restaurant')}**  \n"
+                f"{b.get('date', '')} · {b.get('time', '')} · party of {b.get('party_size', '?')}"
+            )
+            if b.get("perk_applied"):
+                label = "Sample partner offer" if b.get("perk_sample") else "Perk unlocked"
+                st.success(f"🎟️ **{label}:** {b['perk_applied']}")
+            if conf in cancelled:
+                st.caption(f"❌ Cancelled · {conf}")
+            else:
+                st.caption(f"Confirmation {conf}")
+                st.download_button(
+                    "📅 Save to calendar (.ics)",
+                    data=build_ics(b),
+                    file_name=ics_filename(b),
+                    mime="text/calendar",
+                    key=f"ics-{conf}",
+                    use_container_width=True,
+                )
+
+
 # --- Session bootstrap -------------------------------------------------------
 
 def _start(name: str) -> None:
@@ -143,6 +193,7 @@ def main() -> None:
                 st.rerun()
         else:
             _render_profile(st.session_state.session.profile)
+            _render_reservations(st.session_state.session)
             st.divider()
             if st.button("End session / new guest", use_container_width=True):
                 for k in ("session", "display"):

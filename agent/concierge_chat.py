@@ -606,11 +606,14 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
         "status": "booked",
         "restaurant": rec["name"],
         "address": rec.get("address"),
+        "restaurant_phone": rec.get("phone"),
+        "website": rec.get("website"),
         "date": iso,
         "time": time,
         "party_size": party_size,
         "confirmation_id": booking.get("confirmation_id"),
         "perk_applied": rec.get("perk_title"),
+        "perk_sample": rec.get("perk_sample", False),
         "confirmation_sent_to": profile.get("email"),
         "cancellation_policy": (
             f"Free to cancel up to {CANCELLATION_WINDOW_HOURS}h before; inside that "
