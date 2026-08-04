@@ -100,14 +100,34 @@ The Streamlit UI (`agent/chat_app.py`) is a thin wrapper over the same session A
 (`start_session` + `_run_turn`) — the sidebar shows the guest's long-term profile
 filling in live from Chroma as they talk.
 
+## Perks RAG — retrieval you can measure and inspect
+
+The perks layer is a hybrid RAG over a synthetic offers store (10 restaurants, 24
+perks): semantic vector search (local MiniLM embeddings in Chroma) blended with
+structured metadata + time filters, re-ranked by a tunable `semantic_weight`. It's
+both **evaluated** and **inspectable** — see [docs/week3_rag.md](docs/week3_rag.md).
+
+```bash
+uv run python -m mcp_servers.perks_eval                       # hit@k / precision / MRR
+uv run python -m mcp_servers.perks_eval --sweep               # weight vs. precision trade-off
+uv run python -m mcp_servers.perks_inspect "tacos with friends" --day Tue
+uv run python -m mcp_servers.perks_inspect "romantic dinner with wine" --party 2 --blurb
+```
+
+Long-term member memory ([agent/profile_memory.py](agent/profile_memory.py)) runs
+on the same stack with two retrieval modes: key lookup and semantic recall
+(`find_members("the guest who loves Sicilian wine")`).
+
 ## Repo layout
 
 ```
 table-for-four/
 ├── mcp_servers/
 │   ├── search_server.py      # ✅ Google Places search tool (MCP)
-│   ├── perks_server.py       # ✅ perks RAG tool: Chroma hybrid search (MCP)
+│   ├── perks_server.py       # ✅ perks RAG tool: Chroma hybrid + tunable weight (MCP)
 │   ├── perks_data.py         # ✅ deterministic synthetic perks generator
+│   ├── perks_eval.py         # ✅ labeled retrieval eval (hit@k / precision / MRR)
+│   ├── perks_inspect.py      # ✅ CLI: inspect a query's ranked results + scores
 │   ├── booking_server.py     # ✅ booking tools over the mock backend (MCP)
 │   └── fixtures/             # offline fixtures: places + perks_seed.json
 ├── mock_booking_api/         # ✅ FastAPI reservation backend (self-built mock)
