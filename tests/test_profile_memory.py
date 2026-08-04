@@ -166,6 +166,37 @@ def test_email_must_come_from_a_guest_message(monkeypatch):
     assert accepted["email"] == "real.guest@example.com"
 
 
+def test_returning_member_recognized_when_email_given(monkeypatch):
+    # Demo-feedback regression: giving a previously-seen email must flag the guest
+    # as returning and hand the model a name + last booking to welcome them back.
+    import json as _json
+
+    import chromadb
+
+    import agent.concierge_chat as cc
+    from agent import profile_memory as pm
+    from langchain_core.messages import HumanMessage
+
+    monkeypatch.setattr(pm, "_collection", pm.build_collection(chromadb.EphemeralClient()))
+
+    # A member who booked on a previous visit, keyed by email.
+    pm.update_profile(pm._collection, "repeat@x.com", {
+        "name": "Giulia", "cuisines": ["Italian"],
+        "past_bookings": [{"restaurant": "Osteria Midtown", "confirmation_id": "TF4-0001",
+                           "date": "2026-08-01", "status": "confirmed"}],
+    })
+
+    # New session (started under a fresh handle); the guest types the same email.
+    session = cc.ConciergeSession(member_id="a-guest")
+    session.messages = [HumanMessage(content="my email is repeat@x.com")]
+    out = _json.loads(cc._handle_email(session, {"email": "repeat@x.com"}))
+
+    assert out["returning_member"] is True
+    assert out["saved_preferences"]["name"] == "Giulia"
+    assert out["last_booking"]["restaurant"] == "Osteria Midtown"
+    assert "welcome" in out["note"].lower()
+
+
 def _listed(session, place_id="p1", name="Osteria", perk_id=None):
     session.recommendations = {place_id: {"place_id": place_id, "name": name, "perk_id": perk_id}}
 

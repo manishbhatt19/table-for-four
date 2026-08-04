@@ -76,8 +76,12 @@ back to the table. Never answer the off-topic question, even partially.
   the table always comes first.
 
 ## The journey — follow this order
-1. **Welcome** the guest warmly and introduce yourself. If they're a returning
-   member, welcome them back by name and offer to reuse their usual preferences.
+1. **Welcome** the guest warmly and introduce yourself. If the context says this is
+   a RETURNING guest (a profile is on file), welcome them back **by name** and
+   reference something you remember (a favorite cuisine or their last booking),
+   then offer to reuse their usual preferences. A guest is also recognized the
+   moment they give a known **email** (see `set_confirmation_email`) — the instant
+   that happens, pivot to a warm welcome-back even if you already greeted them.
 2. **Understand their intent** — what kind of outing is this?
 3. **Gather what's missing** (only what wasn't already said): their email, the
    date/time, **party size (how many people) — this is required**, location/area,
@@ -119,7 +123,9 @@ back to the table. Never answer the off-topic question, even partially.
 - `recall_guest_profile` — check what you already know.
 - `set_confirmation_email` — save the guest's email (the unique id for returning
   members and where the confirmation notionally goes). NEVER invent or assume an
-  email; use exactly what the guest types. Ask for it before booking.
+  email; use exactly what the guest types. Ask for it before booking. If it returns
+  `returning_member: true`, immediately welcome them back by name and mention their
+  `last_booking`/saved cuisines before continuing.
 - `recommend_restaurants` — get a shortlist with perk flags. Call again with
   adjusted criteria if the guest wants different options.
 - `check_availability_times` — get open times for a chosen restaurant + date.
@@ -322,8 +328,9 @@ def _profile_context(profile: dict[str, Any] | None) -> str:
         return "This is a NEW guest — no profile on file yet."
     known = {k: v for k, v in profile.items() if v and k not in ("member_id", "updated_at")}
     return (
-        "This is a RETURNING guest. Here is what you already remember (don't re-ask "
-        "what you already know; offer to reuse it):\n"
+        "This is a RETURNING guest — open by welcoming them back BY NAME and "
+        "referencing something you remember (a favorite cuisine or their last "
+        "booking). Don't re-ask what you already know; offer to reuse it:\n"
         + json.dumps(known, ensure_ascii=False, indent=2)
     )
 
@@ -363,6 +370,7 @@ def _handle_email(session: ConciergeSession, args: dict[str, Any]) -> str:
     session.profile = profile
     payload: dict[str, Any] = {"status": "saved", "email": key, "returning_member": returning}
     if returning:
+        past = profile.get("past_bookings") or []
         payload["saved_preferences"] = {
             "name": profile.get("name"),
             "cuisines": profile.get("cuisines"),
@@ -370,7 +378,19 @@ def _handle_email(session: ConciergeSession, args: dict[str, Any]) -> str:
             "party_size": profile.get("party_size"),
             "dietary": profile.get("dietary"),
         }
-        payload["note"] = "Returning member — welcome them back and offer to reuse these."
+        if past:
+            last = past[-1]
+            payload["last_booking"] = {
+                "restaurant": last.get("restaurant"),
+                "date": last.get("date"),
+                "status": last.get("status"),
+            }
+        payload["note"] = (
+            "RETURNING member recognized by email. Right now, warmly welcome them "
+            "back BY NAME, mention you remember them (a favorite cuisine or their "
+            "last booking), and offer to reuse their saved details — even if you "
+            "already greeted them generically."
+        )
     return json.dumps(payload, ensure_ascii=False)
 
 

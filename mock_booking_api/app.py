@@ -42,11 +42,14 @@ from pydantic import BaseModel, Field
 
 app = FastAPI(title="Table for Four — Mock Reservation API", version="0.2.0")
 
-# Standard dinner service slots offered by every (fictional) restaurant.
+# Service slots offered by every (fictional) restaurant — lunch and dinner, so
+# guests can book either sitting.
+LUNCH_SLOTS = ["11:30", "12:00", "12:30", "13:00", "13:30", "14:00"]
 DINNER_SLOTS = [
     "17:00", "17:30", "18:00", "18:30", "19:00",
     "19:30", "20:00", "20:30", "21:00",
 ]
+SERVICE_SLOTS = LUNCH_SLOTS + DINNER_SLOTS
 MAX_PARTY_SIZE = 20
 CANCELLATION_WINDOW_HOURS = 24
 
@@ -125,13 +128,13 @@ def _taken_slots(place_id: str, date: str) -> set[str]:
     """Deterministically decide which slots are already booked for (place, date)."""
     digest = hashlib.sha256(f"{place_id}|{date}".encode()).hexdigest()
     seed = int(digest, 16)
-    return {slot for i, slot in enumerate(DINNER_SLOTS) if (seed >> i) & 1}
+    return {slot for i, slot in enumerate(SERVICE_SLOTS) if (seed >> i) & 1}
 
 
 def available_slots(place_id: str, date: str, party_size: int) -> list[str]:
     """Open slots for a restaurant on a date, tightened for larger parties."""
     taken = _taken_slots(place_id, date)
-    slots = [s for s in DINNER_SLOTS if s not in taken]
+    slots = [s for s in SERVICE_SLOTS if s not in taken]
     if party_size >= 8:
         # Large parties are harder to seat: offer every other remaining slot.
         slots = slots[::2]

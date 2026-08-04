@@ -11,9 +11,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 from mcp_servers import booking_server
-from mock_booking_api.app import DINNER_SLOTS, app, available_slots, reset_store
+from mock_booking_api.app import (
+    LUNCH_SLOTS,
+    SERVICE_SLOTS,
+    app,
+    available_slots,
+    reset_store,
+)
 
 PLACE = "fixture-osteria-1"
+NEVER_A_SLOT = "23:30"  # outside lunch and dinner service -> never bookable
 PHONE = "(212) 555-0142"
 WEBSITE = "https://example.com/osteria-midtown"
 
@@ -67,7 +74,7 @@ def test_availability_is_deterministic_subset(client):
     r2 = client.get("/availability", params={"place_id": PLACE, "date": "2026-08-01", "party_size": 2})
     slots = r1.json()["available_slots"]
     assert r1.json() == r2.json()  # deterministic
-    assert set(slots) <= set(DINNER_SLOTS)
+    assert set(slots) <= set(SERVICE_SLOTS)
 
 
 def test_create_booking_success(client):
@@ -83,12 +90,24 @@ def test_create_booking_success(client):
 
 
 def test_booking_unavailable_slot_conflicts(client):
-    # A lunch time is never in the dinner-slot set -> always unavailable.
+    # A time outside all service hours is never bookable -> always a conflict.
     resp = client.post("/bookings", json={
         "place_id": PLACE, "restaurant_name": "Osteria Midtown",
-        "date": "2026-08-01", "time": "12:00", "party_size": 2, "guest_name": "Manish",
+        "date": "2026-08-01", "time": NEVER_A_SLOT, "party_size": 2, "guest_name": "Manish",
     })
     assert resp.status_code == 409
+
+
+def test_lunch_slots_are_offered(client):
+    # Regression for demo feedback: availability must include lunch sittings, not
+    # only dinner — across the month at least one lunch time is open somewhere.
+    seen_lunch = set()
+    for day in range(1, 29):
+        slots = client.get("/availability", params={
+            "place_id": PLACE, "date": f"2026-08-{day:02d}", "party_size": 2,
+        }).json()["available_slots"]
+        seen_lunch |= set(slots) & set(LUNCH_SLOTS)
+    assert seen_lunch, "expected lunch times to be offered somewhere in the month"
 
 
 def test_booking_roundtrip(client):
@@ -111,7 +130,7 @@ def test_party_size_validation(client):
 def test_tool_check_availability_reports_mock_backend():
     out = booking_server.check_availability(PLACE, "2026-08-01", party_size=2)
     assert out["backend"] == "mock"
-    assert set(out["available_slots"]) <= set(DINNER_SLOTS)
+    assert set(out["available_slots"]) <= set(SERVICE_SLOTS)
 
 
 def test_tool_create_then_get():
@@ -131,7 +150,7 @@ def test_tool_create_then_get():
 def test_tool_create_unavailable_returns_structured_error():
     out = booking_server.create_booking(
         place_id=PLACE, restaurant_name="Osteria Midtown",
-        date="2026-08-01", time="12:00", party_size=2, guest_name="Manish",
+        date="2026-08-01", time=NEVER_A_SLOT, party_size=2, guest_name="Manish",
     )
     assert out["booked"] is False
     assert out["error"] == "slot_unavailable"
