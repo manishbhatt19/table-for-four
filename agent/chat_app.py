@@ -1,4 +1,4 @@
-"""Ava — a Streamlit chat UI for the interpersonal Table for Four concierge.
+"""Dino — a Streamlit chat UI for the interpersonal Table for Four concierge.
 
 A thin web wrapper around the existing, UI-agnostic session API in
 `agent.concierge_chat`:
@@ -41,17 +41,17 @@ from agent.config import get_chat_llm
 
 from langchain_core.messages import HumanMessage
 
-st.set_page_config(page_title="Table for Four · Ava", page_icon="🍽️", layout="wide")
+st.set_page_config(page_title="Table for Four · Dino", page_icon="🍽️", layout="wide")
 
 
 # --- Profile panel -----------------------------------------------------------
 
 def _render_profile(profile: dict[str, Any] | None) -> None:
     """Render the guest's long-term profile — the live memory story."""
-    st.subheader("🧠 What Ava remembers")
+    st.subheader("🧠 What Dino remembers")
 
     if not profile:
-        st.caption("Nothing yet — Ava learns as you chat, and remembers you next time.")
+        st.caption("Nothing yet — Dino learns as you chat, and remembers you next time.")
         return
 
     def row(label: str, value: Any) -> None:
@@ -148,7 +148,7 @@ def _render_reservations(session: ConciergeSession) -> None:
 # --- Session bootstrap -------------------------------------------------------
 
 def _start(name: str) -> None:
-    """Create a concierge session, get Ava's greeting, and store it in state."""
+    """Create a concierge session, get Dino's greeting, and store it in state."""
     session = start_session(name)
     session.messages.append(
         HumanMessage(content=f"(System: the guest '{name}' just connected. Greet them.)")
@@ -162,7 +162,7 @@ def _start(name: str) -> None:
 
 def main() -> None:
     st.title("🍽️ Table for Four")
-    st.caption("Ava, your interpersonal reservation concierge — with long-term memory.")
+    st.caption("Dino, your interpersonal reservation concierge — with long-term memory.")
 
     # Bind the (warm) chat model once. None means no API key configured.
     if "llm" not in st.session_state:
@@ -171,7 +171,7 @@ def main() -> None:
 
     if st.session_state.llm is None:
         st.error(
-            "Ava needs an OpenAI (or OpenRouter) key to talk. Add `OPENAI_API_KEY` "
+            "Dino needs an OpenAI (or OpenRouter) key to talk. Add `OPENAI_API_KEY` "
             "to your `.env`, then restart this app.\n\n"
             "The offline booking demo still runs without a key: "
             "`uv run python -m agent`."
@@ -182,13 +182,13 @@ def main() -> None:
     with st.sidebar:
         if "session" not in st.session_state:
             st.subheader("Welcome")
-            st.write("Tell Ava who you are to begin. Use your email to be recognised "
+            st.write("Tell Dino who you are to begin. Use your email to be recognised "
                      "on a return visit.")
             with st.form("identity"):
                 name = st.text_input("Your name, handle, or email", value="")
                 start = st.form_submit_button("Start chatting", use_container_width=True)
             if start and name.strip():
-                with st.spinner("Ava is getting ready…"):
+                with st.spinner("Dino is getting ready…"):
                     _start(name.strip())
                 st.rerun()
         else:
@@ -206,20 +206,20 @@ def main() -> None:
 
     # Render the conversation so far.
     for msg in st.session_state.display:
-        avatar = "🧑" if msg["role"] == "user" else "🌸"
+        avatar = "🧑" if msg["role"] == "user" else "🦖"
         with st.chat_message(msg["role"], avatar=avatar):
             st.markdown(msg["content"])
 
     # Guest turn.
-    if prompt := st.chat_input("Message Ava…"):
+    if prompt := st.chat_input("Message Dino…"):
         st.session_state.display.append({"role": "user", "content": prompt})
         with st.chat_message("user", avatar="🧑"):
             st.markdown(prompt)
 
         session: ConciergeSession = st.session_state.session
         session.messages.append(HumanMessage(content=prompt))
-        with st.chat_message("assistant", avatar="🌸"):
-            with st.spinner("Ava is thinking…"):
+        with st.chat_message("assistant", avatar="🦖"):
+            with st.spinner("Dino is thinking…"):
                 reply = _run_turn(session, st.session_state.llm)
             st.markdown(reply)
         st.session_state.display.append({"role": "assistant", "content": reply})

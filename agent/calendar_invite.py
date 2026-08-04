@@ -59,7 +59,7 @@ def build_ics(booking: dict[str, Any], duration_minutes: int = DEFAULT_DURATION_
         desc.append(f"Restaurant: {booking['restaurant_phone']}")
     if booking.get("website"):
         desc.append(booking["website"])
-    desc.append("Booked with Ava, your Table for Four concierge.")
+    desc.append("Booked with Dino, your Table for Four concierge.")
     description = "\n".join(desc)
 
     uid = f"{booking.get('confirmation_id') or 'tf4'}@tableforfour"

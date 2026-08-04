@@ -278,6 +278,68 @@ def test_book_requires_a_party_size(monkeypatch):
     assert called["n"] == 0  # booking backend never hit without a party size
 
 
+def test_parse_time_tokens_reads_clock_times():
+    from agent.concierge_chat import _parse_time_tokens
+
+    assert "19:00" in _parse_time_tokens("7pm works")
+    assert "19:30" in _parse_time_tokens("how about 7:30 pm")
+    assert "19:00" in _parse_time_tokens("book 19:00")
+    # A bare number (party size, guest count) is NOT a time.
+    assert _parse_time_tokens("a table for 4 people") == set()
+    # A colon time without am/pm keeps both readings so a real slot can match.
+    both = _parse_time_tokens("7:30")
+    assert {"07:30", "19:30"} <= both
+
+
+def test_book_enforces_the_time_the_guest_requested(monkeypatch):
+    # Regression: the guest asked for an available time; the model must book THAT
+    # time, not a different open slot.
+    import json as _json
+
+    import agent.concierge_chat as cc
+    from langchain_core.messages import HumanMessage
+
+    called = {"n": 0}
+    monkeypatch.setattr(cc, "create_booking", lambda **k: called.__setitem__("n", called["n"] + 1) or {})
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com", "party_size": 2})
+    _listed(session)
+    session.availability = {"place_id": "p1", "date": "2026-09-04", "party_size": 2,
+                            "slots": ["19:00", "20:00"]}
+    session.messages = [HumanMessage(content="7pm works great")]
+
+    out = _json.loads(cc._handle_book(session, {
+        "place_id": "p1", "date": "2026-09-04", "time": "20:00", "party_size": 2,
+    }))
+    assert out["status"] == "time_mismatch"
+    assert out["requested_times"] == ["19:00"]
+    assert called["n"] == 0  # never booked the wrong time
+
+
+def test_book_accepts_the_requested_time(monkeypatch):
+    import json as _json
+
+    import agent.concierge_chat as cc
+    from langchain_core.messages import HumanMessage
+
+    monkeypatch.setattr(cc, "create_booking",
+                        lambda **k: {"booked": True, "confirmation_id": "TF4-0009", "booking": {}})
+    monkeypatch.setattr(cc.profile_memory, "remember",
+                        lambda *a, **k: {"email": "g@x.com", "party_size": 2})
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com", "party_size": 2})
+    _listed(session)
+    session.availability = {"place_id": "p1", "date": "2026-09-04", "party_size": 2,
+                            "slots": ["19:00", "20:00"]}
+    session.messages = [HumanMessage(content="let's do 7pm")]
+
+    out = _json.loads(cc._handle_book(session, {
+        "place_id": "p1", "date": "2026-09-04", "time": "19:00", "party_size": 2,
+    }))
+    assert out["status"] == "booked"
+    assert out["time"] == "19:00"
+
+
 def test_set_booking_status_updates_in_place(collection):
     # Flipping a booking's status must edit the row, not append a duplicate (the
     # list-union merge would otherwise leave both the old and new versions).

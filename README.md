@@ -82,9 +82,9 @@ It prints the full reasoning trace and the booking confirmation. With an
 and write the confirmation; with no key it runs a deterministic heuristic path, so
 the whole loop works offline.
 
-## Interpersonal concierge — Ava
+## Interpersonal concierge — Dino
 
-`agent/concierge_chat.py` is the warm, conversational front-end: Ava guides a guest
+`agent/concierge_chat.py` is the warm, conversational front-end: Dino guides a guest
 through a full booking *journey* (understand intent → gather details → recommend →
 pick → check times → book → tips), keeping the guest in the loop at each choice and
 remembering them across sessions in Chroma. It needs an `OPENAI_API_KEY` (or
@@ -112,8 +112,8 @@ work (perks + profiles); the transactional ledger is SQL.
 Cancellation is governed by a **24-hour policy enforced in the backend**, not the
 model: `POST /bookings/{id}/cancel` cancels a booking that's more than 24h away and
 stamps the ledger; inside that window it refuses and returns the restaurant's phone
-and website so the guest can call directly. Ava exposes this as `cancel_reservation`
-and relays the "call the restaurant" path verbatim — she never claims a
+and website so the guest can call directly. Dino exposes this as `cancel_reservation`
+and relays the "call the restaurant" path verbatim — Dino never claims a
 cancellation the backend didn't confirm — and the guest's long-term memory is kept
 in sync with the ledger.
 

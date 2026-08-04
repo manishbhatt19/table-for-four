@@ -1,4 +1,4 @@
-"""Ava — the interpersonal Table for Four concierge (conversational front-end).
+"""Dino — the interpersonal Table for Four concierge (conversational front-end).
 
 A warm, human-facing layer that guides a guest through a full booking *journey*
 rather than one-shot auto-booking:
@@ -34,6 +34,7 @@ Requires an OpenAI (or OpenRouter) key in `.env`.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
@@ -58,9 +59,10 @@ CANCELLATION_WINDOW_HOURS = 24  # cancel allowed only more than this far ahead
 # --- Persona & guardrails ----------------------------------------------------
 
 SYSTEM_PROMPT = """\
-You are **Ava**, a warm, gracious concierge for "Table for Four", a boutique
-restaurant-reservation service. You guide each guest through booking a wonderful
-table and make them feel genuinely looked after.
+You are **Dino**, the warm, upbeat concierge for "Table for Four", a boutique
+restaurant-reservation service — *Dino helps you dine!* You genuinely love good
+food and looking after people, and you guide each guest to a wonderful table while
+making the whole thing feel easy and fun.
 
 ## Your one job (hard guardrail)
 You ONLY help with dining: recommending restaurants and booking tables. If a guest
@@ -69,11 +71,16 @@ advice, general knowledge, homework — warmly decline in one sentence and steer
 back to the table. Never answer the off-topic question, even partially.
 
 ## How you talk
-- Warm, personable, concise. Ask ONE or at most TWO things at a time.
+- Talk like a friendly human host, not a form or a robot. Warm, natural, with a
+  light, playful charm — a little personality goes a long way.
+- Use the guest's name once you know it, and react with real enthusiasm to their
+  plans (a birthday! a first date! friends in town!).
+- Keep it easy: ask ONE or at most TWO things at a time, and never sound clipped or
+  scripted. Vary how you phrase things; sound like you mean it.
 - Always use the pronouns the guest gave you; NEVER guess pronouns from a name —
   ask politely and early if you don't know them.
-- A light, friendly touch is welcome (a favorite cuisine memory, an occasion), but
-  the table always comes first.
+- A light, friendly touch is welcome (a favorite cuisine, the occasion), but the
+  table always comes first.
 
 ## The journey — follow this order
 1. **Welcome** the guest warmly and introduce yourself. If the context says this is
@@ -96,13 +103,16 @@ back to the table. Never answer the off-topic question, even partially.
    restaurants the tool returned.
 5. **Guest picks one** → call `check_availability_times` and tell them the open
    times for that restaurant and date. Only offer times the tool returned.
-6. **Book** — once they choose an available time, call `book_table`. Before
-   booking you MUST have three things confirmed by the guest: the **date**, the
-   **time**, and the **party size**. If any is missing, ask for it first — never
-   guess or default the party size. If there's no availability, or they want
-   something different, gather the new detail and go back to step 4/5 (recommend or
-   check times again) and offer an alternative. Never claim a booking is made until
-   `book_table` returns a confirmation id.
+6. **Book** — once they choose an available time, **read the details back and get a
+   yes first**: "Booking [restaurant], [date] at [time] for [party size] — shall I
+   confirm?" You MUST have the **date**, the **time**, and the **party size** — if
+   any is missing, ask; never guess or default the party size. Then call
+   `book_table` with the **exact time the guest chose** — never substitute a
+   different open slot. (The details you've gathered — date, time, party size — are
+   tracked as working memory and echoed back in the tool results; use them, don't
+   drift.) If there's no availability, or they want something different, gather the
+   new detail and go back to step 4/5 and offer an alternative. Never claim a
+   booking is made until `book_table` returns a confirmation id.
 7. **After booking**, share 2–3 brief, practical **dining tips** so they're
    prepared (e.g. arrive a few minutes early, mention the reservation name and any
    dietary need to the host, note the perk at the table). Keep tips general — do
@@ -303,10 +313,54 @@ class ConciergeSession:
     recommendations: dict[str, Any] = field(default_factory=dict)   # place_id -> rec
     availability: dict[str, Any] | None = None                      # last times shown
     bookings: dict[str, Any] = field(default_factory=dict)          # key -> result (idempotency)
+    pending: dict[str, Any] = field(default_factory=dict)           # outing being planned
 
     @property
     def display_name(self) -> str:
         return (self.profile or {}).get("name") or self.member_id
+
+
+# Times the guest may type: "7pm", "7:30 pm", "19:00". A bare number ("7", "4
+# people") is deliberately NOT treated as a time — too ambiguous to enforce on.
+_TIME_TOKEN = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?", re.I)
+
+
+def _parse_time_tokens(text: str) -> set[str]:
+    """Extract explicit clock times from text as `HH:MM` (24h).
+
+    Only tokens with am/pm or a colon count. For a colon time without am/pm (e.g.
+    "7:30"), both the 24h and the PM reading are emitted so the caller can keep
+    whichever is a real slot.
+    """
+    out: set[str] = set()
+    for m in _TIME_TOKEN.finditer(text or ""):
+        hour = int(m.group(1))
+        minute = int(m.group(2)) if m.group(2) else 0
+        has_colon = m.group(2) is not None
+        ampm = (m.group(3) or "").lower().replace(".", "")
+        if not ampm and not has_colon:
+            continue  # bare number — ambiguous, skip
+        if minute > 59:
+            continue
+        if ampm:
+            h = hour % 12 + (12 if ampm == "pm" else 0)
+            if 0 <= h <= 23:
+                out.add(f"{h:02d}:{minute:02d}")
+        else:  # colon, no am/pm: keep both readings, slot-matching disambiguates
+            if 0 <= hour <= 23:
+                out.add(f"{hour:02d}:{minute:02d}")
+            if hour < 12:
+                out.add(f"{hour + 12:02d}:{minute:02d}")
+    return out
+
+
+def _requested_times(session: ConciergeSession) -> set[str]:
+    """Clock times the guest asked for in their last few messages."""
+    humans = [m for m in session.messages if isinstance(m, HumanMessage)]
+    out: set[str] = set()
+    for m in humans[-4:]:
+        out |= _parse_time_tokens(m.content or "")
+    return out
 
 
 def _guest_typed(session: ConciergeSession, text: str) -> bool:
@@ -398,6 +452,11 @@ def _handle_recommend(session: ConciergeSession, args: dict[str, Any]) -> str:
     cuisine = args.get("cuisine")
     keywords = args.get("keywords") or cuisine or "restaurant"
     party_size = args.get("party_size")
+    # Working memory: remember the outing's party size / date as they're mentioned.
+    if party_size:
+        session.pending["party_size"] = party_size
+    if args.get("date"):
+        session.pending["date"] = args["date"]
     day = None
     if args.get("date"):
         try:
@@ -506,10 +565,14 @@ def _handle_times(session: ConciergeSession, args: dict[str, Any]) -> str:
         return json.dumps({"status": "date_in_past",
                            "message": "That date is in the past. Re-confirm the date with the guest."},
                           ensure_ascii=False)
-    party_size = args.get("party_size") or (session.profile or {}).get("party_size") or 2
+    party_size = args.get("party_size") or session.pending.get("party_size") \
+        or (session.profile or {}).get("party_size") or 2
     avail = check_availability(place_id, iso, party_size)
     slots = avail.get("available_slots", [])
     session.availability = {"place_id": place_id, "date": iso, "party_size": party_size, "slots": slots}
+    # Working memory for the outing being planned.
+    session.pending.update({"place_id": place_id, "restaurant": rec["name"],
+                            "date": iso, "party_size": party_size})
     if not slots:
         return json.dumps({
             "status": "no_availability", "restaurant": rec["name"], "date": iso,
@@ -518,6 +581,9 @@ def _handle_times(session: ConciergeSession, args: dict[str, Any]) -> str:
         }, ensure_ascii=False)
     return json.dumps({
         "status": "ok", "restaurant": rec["name"], "date": iso, "available_times": slots,
+        "remembered": {"restaurant": rec["name"], "date": iso, "party_size": party_size},
+        "reminder": "Book the exact time the guest picks from available_times; keep "
+                    "this date and party size.",
     }, ensure_ascii=False)
 
 
@@ -566,6 +632,17 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
             return json.dumps({
                 "status": "time_unavailable", "available_times": pend["slots"],
                 "message": "That time isn't available; offer one of the available_times.",
+            }, ensure_ascii=False)
+        # If the guest explicitly asked for an available time, book THAT time — don't
+        # silently substitute a different open slot (the random-time bug).
+        wanted = _requested_times(session) & set(pend["slots"])
+        if wanted and time not in wanted:
+            return json.dumps({
+                "status": "time_mismatch",
+                "requested_times": sorted(wanted),
+                "attempted_time": time,
+                "message": "The guest asked for a specific available time. Book exactly "
+                           "that (one of requested_times), not a different slot.",
             }, ensure_ascii=False)
 
     key = f"{place_id}|{iso}|{time}"
@@ -621,6 +698,7 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
         ),
     }
     session.bookings[key] = result
+    session.pending.update({"time": time, "confirmation_id": booking.get("confirmation_id")})
     # Remember the booking + reusable preferences for next time.
     session.profile = profile_memory.remember(session.member_id, {
         "party_size": party_size,
@@ -761,19 +839,19 @@ def run_chat(name: str | None = None) -> None:
     session.messages.append(
         HumanMessage(content=f"(System: the guest '{name}' just connected. Greet them.)")
     )
-    print(f"\nAva: {_run_turn(session, llm)}\n")
+    print(f"\nDino: {_run_turn(session, llm)}\n")
 
     print("(Type 'quit' or 'exit' to leave.)\n")
     while True:
         try:
             user = input("You: ").strip()
         except (EOFError, KeyboardInterrupt):
-            print("\nAva: Lovely chatting — enjoy your meal!")
+            print("\nDino: Lovely chatting — enjoy your meal!")
             return
         if user.lower() in {"quit", "exit", "bye"}:
-            print("Ava: Lovely chatting — enjoy your meal!")
+            print("Dino: Lovely chatting — enjoy your meal!")
             return
         if not user:
             continue
         session.messages.append(HumanMessage(content=user))
-        print(f"\nAva: {_run_turn(session, llm)}\n")
+        print(f"\nDino: {_run_turn(session, llm)}\n")
