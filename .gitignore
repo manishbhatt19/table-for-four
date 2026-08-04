@@ -24,3 +24,6 @@ agent/.chroma_profiles/
 # LangGraph dev server / Studio artifacts
 .langgraph_api/
 .langgraph/
+
+# SQLite bookings ledger (runtime state)
+mock_booking_api/bookings.db

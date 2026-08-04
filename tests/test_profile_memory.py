@@ -17,6 +17,7 @@ from agent.profile_memory import (
     resolve_key,
     save_profile,
     search_profiles,
+    set_booking_status,
     set_email,
     update_profile,
 )
@@ -244,6 +245,94 @@ def test_book_requires_a_party_size(monkeypatch):
 
     assert out["status"] == "need_party_size"
     assert called["n"] == 0  # booking backend never hit without a party size
+
+
+def test_set_booking_status_updates_in_place(collection):
+    # Flipping a booking's status must edit the row, not append a duplicate (the
+    # list-union merge would otherwise leave both the old and new versions).
+    update_profile(collection, "g@x.com", {
+        "email": "g@x.com",
+        "past_bookings": [{"restaurant": "Osteria", "confirmation_id": "TF4-0001",
+                           "status": "confirmed"}],
+    })
+    set_booking_status(collection, "g@x.com", "TF4-0001", "cancelled")
+    bookings = load_profile(collection, "g@x.com")["past_bookings"]
+    assert len(bookings) == 1
+    assert bookings[0]["status"] == "cancelled"
+
+
+def _open_far_future_slot(place: str, party_size: int = 2) -> tuple[str, str]:
+    from mock_booking_api.app import available_slots
+    for day in range(1, 29):
+        date = f"2099-12-{day:02d}"
+        slots = available_slots(place, date, party_size)
+        if slots:
+            return date, slots[0]
+    raise AssertionError("no far-future open slot found")
+
+
+def test_cancel_reservation_marks_history_cancelled(monkeypatch):
+    # End-to-end concierge cancel: a far-future booking cancels under the real
+    # clock, and long-term memory is updated to match the ledger.
+    import json as _json
+
+    import chromadb
+
+    import agent.concierge_chat as cc
+    from agent import profile_memory as pm
+
+    monkeypatch.setattr(pm, "_collection", pm.build_collection(chromadb.EphemeralClient()))
+
+    place = "fixture-osteria-1"
+    date, slot = _open_far_future_slot(place)
+    booked = cc.create_booking(
+        place_id=place, restaurant_name="Osteria Midtown", date=date, time=slot,
+        party_size=2, guest_name="Manish", restaurant_phone="(212) 555-0142",
+        website="https://example.com/osteria-midtown", guest_email="g@x.com",
+    )
+    conf = booked["confirmation_id"]
+    pm.update_profile(pm._collection, "g@x.com", {
+        "email": "g@x.com",
+        "past_bookings": [{"restaurant": "Osteria Midtown", "confirmation_id": conf,
+                           "date": date, "time": slot, "party_size": 2, "status": "confirmed"}],
+    })
+    session = cc.ConciergeSession(
+        member_id="g@x.com", profile=pm.load_profile(pm._collection, "g@x.com")
+    )
+
+    out = _json.loads(cc._handle_cancel(session, {"confirmation_id": conf}))
+    assert out["status"] == "cancelled"
+    stored = pm.load_profile(pm._collection, "g@x.com")["past_bookings"][0]
+    assert stored["status"] == "cancelled"
+
+
+def test_cancel_too_late_is_relayed_not_claimed(monkeypatch):
+    # When the backend says too_late, the handler must surface the restaurant's
+    # contact and the "don't claim cancellation" instruction — never a success.
+    import json as _json
+
+    import agent.concierge_chat as cc
+
+    monkeypatch.setattr(cc, "cancel_booking", lambda *a, **k: {
+        "status": "too_late", "message": "within 24h",
+        "restaurant_name": "Osteria Midtown", "restaurant_phone": "(212) 555-0142",
+        "website": "https://example.com/osteria-midtown",
+    })
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    out = _json.loads(cc._handle_cancel(session, {"confirmation_id": "TF4-0001"}))
+    assert out["status"] == "too_late"
+    assert out["restaurant_phone"] == "(212) 555-0142"
+    assert "instruction" in out
+
+
+def test_cancel_requires_a_confirmation_id():
+    import json as _json
+
+    import agent.concierge_chat as cc
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    out = _json.loads(cc._handle_cancel(session, {}))
+    assert out["status"] == "need_confirmation_id"
 
 
 def test_recommend_filters_cuisine_and_flags_perks():

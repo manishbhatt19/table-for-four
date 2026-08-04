@@ -260,3 +260,26 @@ def adopt_email(current_member_id: str, email: str) -> tuple[str, dict[str, Any]
 
 def find_members(query: str, n_results: int = 5) -> list[dict[str, Any]]:
     return search_profiles(get_collection(), query, n_results)
+
+
+def set_booking_status(
+    collection: Collection, member_id: str, confirmation_id: str, status: str
+) -> dict[str, Any] | None:
+    """Flip a stored past-booking's status (e.g. to 'cancelled') and persist.
+
+    A targeted in-place edit + full save, deliberately *not* the union-merge path
+    (`update_profile`), which would append a duplicate rather than update the row.
+    """
+    profile = load_profile(collection, member_id)
+    if not profile:
+        return None
+    changed = False
+    for booking in profile.get("past_bookings", []):
+        if booking.get("confirmation_id") == confirmation_id:
+            booking["status"] = status
+            changed = True
+    return save_profile(collection, member_id, profile) if changed else profile
+
+
+def mark_booking(member_id: str, confirmation_id: str, status: str) -> dict[str, Any] | None:
+    return set_booking_status(get_collection(), member_id, confirmation_id, status)

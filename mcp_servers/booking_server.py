@@ -90,6 +90,10 @@ def create_booking(
     guest_name: str,
     perk_id: str | None = None,
     special_requests: str | None = None,
+    address: str | None = None,
+    restaurant_phone: str | None = None,
+    website: str | None = None,
+    guest_email: str | None = None,
 ) -> dict[str, Any]:
     """Create a reservation (the irreversible write).
 
@@ -102,6 +106,10 @@ def create_booking(
         guest_name: Name the reservation is held under.
         perk_id: Optional perk/offer being applied (from `find_perks`).
         special_requests: Optional free-text note (e.g. dietary needs).
+        address: Restaurant address, saved to the ledger (from `search_restaurants`).
+        restaurant_phone: Restaurant phone, saved for direct-cancellation contact.
+        website: Restaurant website, saved for direct-cancellation contact.
+        guest_email: Guest email the reservation is booked under (ledger key).
 
     Returns:
         On success: `{backend, booked: true, confirmation_id, booking}`.
@@ -119,6 +127,10 @@ def create_booking(
         "guest_name": guest_name,
         "perk_id": perk_id,
         "special_requests": special_requests,
+        "address": address,
+        "restaurant_phone": restaurant_phone,
+        "website": website,
+        "guest_email": guest_email,
     }
     resp = client.post("/bookings", json=payload)
 
@@ -154,6 +166,58 @@ def get_booking(confirmation_id: str) -> dict[str, Any]:
     booking = resp.json()
     booking["backend"] = _backend
     return booking
+
+
+@mcp.tool()
+def cancel_booking(
+    confirmation_id: str, reason: str | None = None, now: str | None = None
+) -> dict[str, Any]:
+    """Cancel a reservation, subject to the 24-hour policy (enforced by the backend).
+
+    A booking can be cancelled only while it is more than 24 hours away. Inside
+    that window the backend refuses and returns the restaurant's contact details so
+    the guest can call directly — the agent must relay those, not retry.
+
+    Args:
+        confirmation_id: The reservation to cancel.
+        reason: Optional free-text cancellation reason, recorded in the ledger.
+        now: Optional ISO datetime override for the 24h check (testing only).
+
+    Returns:
+        - Cancelled: `{backend, status: "cancelled", booking}`.
+        - Too late: `{backend, status: "too_late", restaurant_name,
+          restaurant_phone, website, hours_until_booking, message}` — the agent
+          should tell the guest to contact the restaurant directly.
+        - `{backend, status: "already_cancelled" | "not_found"}`.
+    """
+    client = _get_client()
+    body: dict[str, Any] = {}
+    if reason is not None:
+        body["reason"] = reason
+    if now is not None:
+        body["now"] = now
+    resp = client.post(f"/bookings/{confirmation_id}/cancel", json=body)
+
+    if resp.status_code == 404:
+        return {"backend": _backend, "status": "not_found"}
+    if resp.status_code == 409:
+        detail = resp.json().get("detail", {})
+        if detail.get("error") == "already_cancelled":
+            return {"backend": _backend, "status": "already_cancelled",
+                    "cancelled_at": detail.get("cancelled_at")}
+        # within_24h: surface the restaurant's own contact channels.
+        return {
+            "backend": _backend,
+            "status": "too_late",
+            "message": detail.get("message"),
+            "hours_until_booking": detail.get("hours_until_booking"),
+            "restaurant_name": detail.get("restaurant_name"),
+            "restaurant_phone": detail.get("restaurant_phone"),
+            "website": detail.get("website"),
+        }
+    resp.raise_for_status()
+    booking = resp.json()
+    return {"backend": _backend, "status": "cancelled", "booking": booking}
 
 
 if __name__ == "__main__":

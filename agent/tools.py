@@ -9,7 +9,12 @@ node code.
 
 from __future__ import annotations
 
-from mcp_servers.booking_server import check_availability, create_booking, get_booking
+from mcp_servers.booking_server import (
+    cancel_booking,
+    check_availability,
+    create_booking,
+    get_booking,
+)
 from mcp_servers.perks_server import find_perks
 from mcp_servers.search_server import search_restaurants
 
@@ -20,6 +25,7 @@ TOOLS = {
     "check_availability": check_availability,
     "create_booking": create_booking,
     "get_booking": get_booking,
+    "cancel_booking": cancel_booking,
 }
 
 __all__ = [
@@ -29,4 +35,5 @@ __all__ = [
     "check_availability",
     "create_booking",
     "get_booking",
+    "cancel_booking",
 ]

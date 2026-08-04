@@ -42,10 +42,17 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from agent import profile_memory, reasoning
 from agent.config import get_chat_llm
-from agent.tools import check_availability, create_booking, find_perks, search_restaurants
+from agent.tools import (
+    cancel_booking,
+    check_availability,
+    create_booking,
+    find_perks,
+    search_restaurants,
+)
 
 MAX_TOOL_HOPS = 6  # guard: bound tool-call chaining within a single guest turn
 MAX_RECOMMENDATIONS = 4
+CANCELLATION_WINDOW_HOURS = 24  # cancel allowed only more than this far ahead
 
 
 # --- Persona & guardrails ----------------------------------------------------
@@ -98,7 +105,13 @@ back to the table. Never answer the off-topic question, even partially.
    not invent specifics about the restaurant.
 8. **Offer another** — ask whether they'd like to book another restaurant for a
    different day. If yes, return to step 3/4 for the new outing.
-9. **Close** warmly when they're done.
+9. **Cancellations** — if a guest wants to cancel, find the reservation's
+   confirmation id (ask, or use `recall_guest_profile`) and call
+   `cancel_reservation`. A booking can only be cancelled **more than 24 hours**
+   before its time. If the tool returns `too_late`, do NOT say it was cancelled:
+   apologize briefly, explain the 24-hour policy, and give the guest the
+   restaurant's **phone and website** (from the tool result) to cancel directly.
+10. **Close** warmly when they're done.
 
 ## Tools
 - `remember_guest_details` — save durable facts (pronouns, email is separate, see
@@ -112,6 +125,9 @@ back to the table. Never answer the off-topic question, even partially.
 - `check_availability_times` — get open times for a chosen restaurant + date.
 - `book_table` — book a specific restaurant at a specific available time. Requires
   the guest's email to be on file first.
+- `cancel_reservation` — cancel a booking by its confirmation id. The 24-hour
+  policy is enforced by the system; honor a `too_late` result exactly as described
+  in step 9 (never claim a cancellation the tool didn't confirm).
 
 We don't actually send email in this demo, but always tell the guest the
 confirmation will be sent to their address.
@@ -242,6 +258,27 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "special_requests": {"type": "string"},
                 },
                 "required": ["place_id", "date", "time", "party_size"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cancel_reservation",
+            "description": (
+                "Cancel an existing reservation by its confirmation id. The backend "
+                "enforces the 24-hour policy: if the booking is less than 24 hours "
+                "away it returns status 'too_late' with the restaurant's phone and "
+                "website — relay those and do NOT claim it was cancelled. Look up the "
+                "confirmation id via recall_guest_profile if you don't have it."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "confirmation_id": {"type": "string", "description": "e.g. 'TF4-0001'."},
+                    "reason": {"type": "string", "description": "Optional reason to record."},
+                },
+                "required": ["confirmation_id"],
             },
         },
     },
@@ -391,6 +428,9 @@ def _handle_recommend(session: ConciergeSession, args: dict[str, Any]) -> str:
         rec = {
             "place_id": c["place_id"],
             "name": c["name"],
+            "address": c.get("address"),
+            "phone": c.get("phone"),
+            "website": c.get("website"),
             "cuisine": (c.get("primary_type") or "").replace("_restaurant", "") or None,
             "rating": c.get("rating"),
             "price_level": c.get("price_level"),
@@ -531,6 +571,10 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
         guest_name=session.display_name,
         perk_id=rec.get("perk_id"),
         special_requests=special,
+        address=rec.get("address"),
+        restaurant_phone=rec.get("phone"),
+        website=rec.get("website"),
+        guest_email=profile.get("email"),
     )
     if not booking.get("booked"):
         return json.dumps({
@@ -541,12 +585,17 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
     result = {
         "status": "booked",
         "restaurant": rec["name"],
+        "address": rec.get("address"),
         "date": iso,
         "time": time,
         "party_size": party_size,
         "confirmation_id": booking.get("confirmation_id"),
         "perk_applied": rec.get("perk_title"),
         "confirmation_sent_to": profile.get("email"),
+        "cancellation_policy": (
+            f"Free to cancel up to {CANCELLATION_WINDOW_HOURS}h before; inside that "
+            "window, call the restaurant directly."
+        ),
     }
     session.bookings[key] = result
     # Remember the booking + reusable preferences for next time.
@@ -554,10 +603,52 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
         "party_size": party_size,
         "past_bookings": [{
             "restaurant": rec["name"], "confirmation_id": booking.get("confirmation_id"),
-            "date": iso, "time": time, "party_size": party_size,
+            "place_id": place_id, "date": iso, "time": time, "party_size": party_size,
+            "status": "confirmed",
         }],
     })
     return json.dumps(result, ensure_ascii=False)
+
+
+def _handle_cancel(session: ConciergeSession, args: dict[str, Any]) -> str:
+    conf = (args.get("confirmation_id") or "").strip()
+    if not conf:
+        return json.dumps({
+            "status": "need_confirmation_id",
+            "message": "Ask the guest which reservation to cancel (its confirmation "
+                       "id), or call recall_guest_profile to find it in their history.",
+        }, ensure_ascii=False)
+
+    result = cancel_booking(conf, reason=args.get("reason"))
+    status = result.get("status")
+
+    if status == "cancelled":
+        # Keep long-term memory consistent with the ledger.
+        updated = profile_memory.mark_booking(session.member_id, conf, "cancelled")
+        if updated:
+            session.profile = updated
+        return json.dumps({
+            "status": "cancelled",
+            "confirmation_id": conf,
+            "message": "Reservation cancelled and noted in the guest's history. "
+                       "Confirm warmly and offer further help.",
+        }, ensure_ascii=False)
+
+    if status == "too_late":
+        # Deterministic 24h guardrail: the agent must NOT claim it cancelled — it
+        # relays the restaurant's own contact details so the guest can call.
+        return json.dumps({
+            "status": "too_late",
+            "message": result.get("message"),
+            "restaurant_name": result.get("restaurant_name"),
+            "restaurant_phone": result.get("restaurant_phone"),
+            "website": result.get("website"),
+            "instruction": "Do not say it was cancelled. Apologize briefly, explain "
+                           "the 24-hour policy, and give the guest the restaurant's "
+                           "phone (and website) to cancel directly.",
+        }, ensure_ascii=False)
+
+    return json.dumps(result, ensure_ascii=False)  # already_cancelled | not_found
 
 
 _HANDLERS = {
@@ -567,6 +658,7 @@ _HANDLERS = {
     "recommend_restaurants": _handle_recommend,
     "check_availability_times": _handle_times,
     "book_table": _handle_book,
+    "cancel_reservation": _handle_cancel,
 }
 
 
