@@ -100,6 +100,23 @@ The Streamlit UI (`agent/chat_app.py`) is a thin wrapper over the same session A
 (`start_session` + `_run_turn`) — the sidebar shows the guest's long-term profile
 filling in live from Chroma as they talk.
 
+## Bookings ledger & cancellation policy
+
+Reservations persist to a **SQLite ledger** in the mock backend
+([mock_booking_api/app.py](mock_booking_api/app.py)) — a real relational
+system-of-record (restaurant name/address/phone, date/time, party, guest email,
+`status`, and cancellation timestamps), still zero-setup and offline (path via
+`BOOKING_DB_PATH`; tests use an in-memory DB). Chroma stays reserved for semantic
+work (perks + profiles); the transactional ledger is SQL.
+
+Cancellation is governed by a **24-hour policy enforced in the backend**, not the
+model: `POST /bookings/{id}/cancel` cancels a booking that's more than 24h away and
+stamps the ledger; inside that window it refuses and returns the restaurant's phone
+and website so the guest can call directly. Ava exposes this as `cancel_reservation`
+and relays the "call the restaurant" path verbatim — she never claims a
+cancellation the backend didn't confirm — and the guest's long-term memory is kept
+in sync with the ledger.
+
 ## Perks RAG — retrieval you can measure and inspect
 
 The perks layer is a hybrid RAG over a synthetic offers store (10 restaurants, 24
@@ -128,9 +145,9 @@ table-for-four/
 │   ├── perks_data.py         # ✅ deterministic synthetic perks generator
 │   ├── perks_eval.py         # ✅ labeled retrieval eval (hit@k / precision / MRR)
 │   ├── perks_inspect.py      # ✅ CLI: inspect a query's ranked results + scores
-│   ├── booking_server.py     # ✅ booking tools over the mock backend (MCP)
+│   ├── booking_server.py     # ✅ booking + cancellation tools over the backend (MCP)
 │   └── fixtures/             # offline fixtures: places + perks_seed.json
-├── mock_booking_api/         # ✅ FastAPI reservation backend (self-built mock)
+├── mock_booking_api/         # ✅ FastAPI reservation backend + SQLite ledger (self-built mock)
 ├── agent/                    # ✅ (M3) LangGraph orchestrator
 │   ├── graph.py              #     state machine + refine-retry loop + checkpointer
 │   ├── reasoning.py          #     heuristic + LLM parse / rank / narrate
