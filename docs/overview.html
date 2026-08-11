@@ -1,0 +1,850 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+
+</head>
+<body>
+<title>Table for Four — how it works</title>
+
+<style>
+  :root {
+    /* The page wears the product's own faces: the menu cards Dino renders are set
+       in Georgia over Segoe UI, so the write-up is set the same way. */
+    --serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
+
+    --paper:      #EFECE6;
+    --surface:    #F8F6F2;
+    --ink:        #1E1713;
+    --muted:      #5F544B;
+    --rule:       #D7D1C7;
+    --accent:     #A9661F;
+    --accent-ink: #FFFFFF;
+    --wash:       #E7E0D3;
+    --good:       #3B6E4A;
+    --code-bg:    #E6E1D7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #15100D;
+      --surface:    #1F1813;
+      --ink:        #F1EBE2;
+      --muted:      #A2958A;
+      --rule:       #352A22;
+      --accent:     #E0A458;
+      --accent-ink: #1B1410;
+      --wash:       #2A211A;
+      --good:       #86C08A;
+      --code-bg:    #241C16;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:      #15100D;
+    --surface:    #1F1813;
+    --ink:        #F1EBE2;
+    --muted:      #A2958A;
+    --rule:       #352A22;
+    --accent:     #E0A458;
+    --accent-ink: #1B1410;
+    --wash:       #2A211A;
+    --good:       #86C08A;
+    --code-bg:    #241C16;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 16px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 900px; margin: 0 auto; padding: 0 24px; }
+
+  /* --- Masthead ---------------------------------------------------------- */
+  header.top {
+    border-bottom: 1px solid var(--rule);
+    background: var(--surface);
+  }
+  .masthead { padding: 54px 0 40px; }
+  .kicker {
+    font-family: "Cascadia Mono", ui-monospace, Consolas, monospace;
+    font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 14px;
+  }
+  h1 {
+    font-family: var(--serif);
+    font-size: clamp(34px, 6vw, 52px);
+    line-height: 1.05; margin: 0 0 16px; letter-spacing: -0.015em;
+    text-wrap: balance; font-weight: 400;
+  }
+  .standfirst {
+    font-size: clamp(17px, 2.2vw, 19px); color: var(--muted);
+    max-width: 60ch; margin: 0 0 26px;
+  }
+  nav.chapters {
+    display: flex; flex-wrap: wrap; gap: 0 26px;
+    border-top: 1px solid var(--rule); padding-top: 16px;
+    font-family: "Cascadia Mono", ui-monospace, Consolas, monospace;
+    font-size: 12px; letter-spacing: 0.04em;
+  }
+  nav.chapters a { color: var(--muted); text-decoration: none; padding: 4px 0; }
+  nav.chapters a:hover, nav.chapters a:focus-visible { color: var(--accent); }
+
+  /* --- Sections ---------------------------------------------------------- */
+  section { padding: 56px 0; border-bottom: 1px solid var(--rule); }
+  section:last-of-type { border-bottom: 0; }
+  .eyebrow {
+    font-family: "Cascadia Mono", ui-monospace, Consolas, monospace;
+    font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 10px;
+  }
+  h2 {
+    font-family: var(--serif); font-weight: 400;
+    font-size: clamp(26px, 4vw, 34px); line-height: 1.15;
+    margin: 0 0 18px; letter-spacing: -0.01em; text-wrap: balance;
+  }
+  h3 {
+    font-family: var(--serif); font-weight: 400; font-size: 20px;
+    margin: 0 0 6px; letter-spacing: -0.005em;
+  }
+  p { margin: 0 0 16px; max-width: 68ch; }
+  .lede { font-size: 17.5px; }
+  strong { font-weight: 600; }
+  code, .mono {
+    font-family: "Cascadia Mono", ui-monospace, Consolas, monospace;
+    font-size: 0.87em; background: var(--code-bg);
+    padding: 1px 5px; border-radius: 3px;
+  }
+
+  /* --- Figures ----------------------------------------------------------- */
+  figure { margin: 26px 0 22px; }
+  .scroller { overflow-x: auto; padding-bottom: 4px; }
+  figure svg { display: block; max-width: 100%; height: auto; color: var(--ink); }
+  figcaption {
+    font-size: 13.5px; color: var(--muted); margin-top: 12px;
+    padding-left: 13px; border-left: 2px solid var(--accent);
+    max-width: 62ch;
+  }
+
+  /* --- Cards / grids ------------------------------------------------------ */
+  .grid { display: grid; gap: 14px; margin: 22px 0; }
+  .grid.two { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+  .grid.three { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+  .card {
+    background: var(--surface); border: 1px solid var(--rule);
+    border-radius: 4px; padding: 18px 20px;
+  }
+  .card .tag {
+    font-family: "Cascadia Mono", ui-monospace, Consolas, monospace;
+    font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--accent); display: block; margin-bottom: 8px;
+  }
+  .card p { margin: 0; font-size: 14.5px; color: var(--muted); max-width: none; }
+
+  /* --- Data table --------------------------------------------------------- */
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; margin: 20px 0; }
+  th {
+    text-align: left; font-family: "Cascadia Mono", ui-monospace, Consolas, monospace;
+    font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--muted); border-bottom: 1px solid var(--rule);
+    padding: 0 12px 8px 0; font-weight: 400;
+  }
+  td { padding: 10px 12px 10px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  td:first-child { white-space: nowrap; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* --- Metric row --------------------------------------------------------- */
+  .metrics { display: flex; flex-wrap: wrap; gap: 28px; margin: 24px 0 8px; }
+  .metric .value {
+    font-family: var(--serif); font-size: 32px; line-height: 1;
+    font-variant-numeric: tabular-nums; color: var(--accent);
+  }
+  .metric .label {
+    font-family: "Cascadia Mono", ui-monospace, Consolas, monospace;
+    font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--muted); margin-top: 7px; display: block;
+  }
+
+  ul.plain { margin: 0 0 16px; padding-left: 20px; max-width: 68ch; }
+  ul.plain li { margin-bottom: 7px; }
+
+  .pull {
+    font-family: var(--serif); font-size: 19px; font-style: italic;
+    color: var(--ink); border-left: 2px solid var(--accent);
+    padding-left: 16px; margin: 24px 0; max-width: 58ch;
+  }
+
+  footer {
+    padding: 34px 0 60px; color: var(--muted); font-size: 13.5px;
+  }
+  a { color: var(--accent); }
+</style>
+
+<header class="top">
+  <div class="wrap masthead">
+    <p class="kicker">CMU AI Agent Certification · Capstone · Manish Bhatt</p>
+    <h1>Table for Four</h1>
+    <p class="standfirst">
+      A dining concierge you talk to. It understands what kind of evening you want,
+      finds real restaurants, checks what they're known for, applies an offer if one
+      fits, and books the table — remembering you for next time.
+    </p>
+    <nav class="chapters">
+      <a href="#product">The product</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#memory">Memory &amp; retrieval</a>
+      <a href="#surface">The surface</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ================================================================= -->
+  <section id="product">
+    <p class="eyebrow">The product</p>
+    <h2>A booking journey, not a search box</h2>
+
+    <p class="lede">
+      The concierge is called <strong>Dino</strong>. A guest describes an evening in
+      their own words — <em>"birthday dinner Friday, four of us, one guest is
+      gluten-free"</em> — and Dino runs the whole errand: works out what's missing,
+      asks for it, shortlists restaurants, flags which carry an offer, checks real
+      availability, reads the details back for a yes, and books.
+    </p>
+
+    <p>
+      The interesting part is what it <em>won't</em> do. It never invents a
+      restaurant, a time, an email address or a confirmation number. Every fact it
+      states came back from a tool, and the awkward rules are enforced in code rather
+      than requested politely in a prompt.
+    </p>
+
+    <div class="grid two">
+      <div class="card">
+        <span class="tag">Guardrail</span>
+        <p>Dining only. Anything else gets one warm sentence and a redirect — it will
+        not answer the off-topic question even partially.</p>
+      </div>
+      <div class="card">
+        <span class="tag">Guardrail</span>
+        <p>An email must appear in the guest's own typed messages before it can be
+        saved. The model cannot supply one from imagination.</p>
+      </div>
+      <div class="card">
+        <span class="tag">Guardrail</span>
+        <p>Only restaurants actually shown to the guest can be booked, at exactly the
+        time they picked — not a nearby free slot.</p>
+      </div>
+      <div class="card">
+        <span class="tag">Guardrail</span>
+        <p>Cancellations inside 24 hours are refused by the backend, which returns the
+        restaurant's phone number instead. Dino relays it and never claims otherwise.</p>
+      </div>
+    </div>
+
+    <p class="pull">
+      The rule of thumb throughout: if getting it wrong would embarrass the guest at
+      the table, it belongs in code, not in the prompt.
+    </p>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="architecture">
+    <p class="eyebrow">Architecture</p>
+    <h2>LangGraph decides; MCP servers act</h2>
+
+    <p>
+      The reasoning loop is a <strong>LangGraph state machine</strong> — an explicit
+      graph of nine steps rather than a model improvising tool calls. Every node reads
+      and writes one shared state object, so at any moment you can see exactly what the
+      agent knows and why it moved.
+    </p>
+
+    <figure>
+      <div class="scroller">
+        <svg viewBox="0 0 620 348" role="img" width="620"
+             aria-label="The concierge graph: parse, search, match perks, rank, then propose, gate, book, audit — with a refine loop back into search when a search returns nothing, and a gate that ends the run if the booking is not approved.">
+          <defs>
+            <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+            <marker id="ar-a" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)"/>
+            </marker>
+          </defs>
+
+          <g font-family="Cascadia Mono, ui-monospace, Consolas, monospace" font-size="13">
+            <!-- row A -->
+            <g fill="none" stroke="currentColor" stroke-width="1.3">
+              <rect x="20"  y="92" width="130" height="48" rx="3"/>
+              <rect x="170" y="92" width="130" height="48" rx="3"/>
+              <rect x="320" y="92" width="130" height="48" rx="3"/>
+              <rect x="470" y="92" width="130" height="48" rx="3"/>
+            </g>
+            <g fill="currentColor" text-anchor="middle">
+              <text x="85"  y="121">parse</text>
+              <text x="235" y="121">search</text>
+              <text x="385" y="121">match perks</text>
+              <text x="535" y="121">rank</text>
+            </g>
+            <g stroke="currentColor" stroke-width="1.3" marker-end="url(#ar)">
+              <line x1="150" y1="116" x2="166" y2="116"/>
+              <line x1="300" y1="116" x2="316" y2="116"/>
+              <line x1="450" y1="116" x2="466" y2="116"/>
+            </g>
+
+            <!-- the refine loop, in the accent: the one edge that makes it a loop -->
+            <g stroke="var(--accent)" stroke-width="1.5" fill="none">
+              <rect x="170" y="18" width="130" height="42" rx="3"/>
+              <path d="M 265 92 L 265 64" marker-end="url(#ar-a)"/>
+              <path d="M 205 60 L 205 88" marker-end="url(#ar-a)"/>
+            </g>
+            <text x="235" y="44"  fill="var(--accent)" text-anchor="middle">refine</text>
+            <text x="277" y="82"  fill="var(--accent)" font-size="12">0 results</text>
+            <text x="196" y="82"  fill="var(--accent)" font-size="12" text-anchor="end">relax one filter</text>
+
+            <!-- the wrap from row A into row B -->
+            <path d="M 535 140 L 535 182 L 85 182 L 85 228"
+                  fill="none" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar)"/>
+
+            <!-- row B -->
+            <g fill="none" stroke="currentColor" stroke-width="1.3">
+              <rect x="20"  y="232" width="130" height="48" rx="3"/>
+              <rect x="170" y="232" width="130" height="48" rx="3"/>
+              <rect x="320" y="232" width="130" height="48" rx="3"/>
+              <rect x="470" y="232" width="130" height="48" rx="3"/>
+            </g>
+            <g fill="currentColor" text-anchor="middle">
+              <text x="85"  y="261">propose</text>
+              <text x="235" y="261">gate</text>
+              <text x="385" y="261">book</text>
+              <text x="535" y="261">audit</text>
+            </g>
+            <g stroke="currentColor" stroke-width="1.3" marker-end="url(#ar)">
+              <line x1="150" y1="256" x2="166" y2="256"/>
+              <line x1="300" y1="256" x2="316" y2="256"/>
+              <line x1="450" y1="256" x2="466" y2="256"/>
+            </g>
+
+            <!-- gate's other exit: skip the booking, still record it -->
+            <path d="M 235 280 L 235 312 L 535 312 L 535 284"
+                  fill="none" stroke="currentColor" stroke-width="1.2"
+                  stroke-dasharray="4 3" marker-end="url(#ar)"/>
+            <text x="385" y="332" fill="currentColor" text-anchor="middle"
+                  font-size="12" opacity="0.75">not approved — skip the booking, still record it</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        The refine edge (amber) is what makes this a reasoning loop rather than a
+        pipeline: an empty search sends the agent back to relax one constraint and try
+        again, bounded at two attempts so it can never spin.
+      </figcaption>
+    </figure>
+
+    <p>
+      Everything the agent can actually <em>do</em> lives behind <strong>MCP
+      servers</strong> — four small, separately testable tool servers. The graph never
+      touches an API or a database directly; it asks a tool. That boundary is what
+      makes the whole thing testable offline and auditable in production.
+    </p>
+
+    <figure>
+      <div class="scroller">
+        <svg viewBox="0 0 880 330" role="img" width="880"
+             aria-label="The agent reaches four MCP tool servers, which in turn reach Google Places, a local Chroma vector store, Tavily web search, and a FastAPI backend over a SQLite ledger.">
+          <defs>
+            <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <g font-family="Cascadia Mono, ui-monospace, Consolas, monospace" font-size="12">
+
+            <rect x="12" y="30" width="126" height="268" rx="3"
+                  fill="none" stroke="currentColor" stroke-width="1.6"/>
+            <text x="75" y="158" fill="currentColor" text-anchor="middle">agent</text>
+            <text x="75" y="176" fill="currentColor" text-anchor="middle" opacity="0.65">(LangGraph)</text>
+
+            <!-- four tool rows -->
+            <g fill="none" stroke="currentColor" stroke-width="1.25">
+              <rect x="238" y="30"  width="222" height="52" rx="3"/>
+              <rect x="238" y="102" width="222" height="52" rx="3"/>
+              <rect x="238" y="174" width="222" height="52" rx="3"/>
+              <rect x="238" y="246" width="222" height="52" rx="3"/>
+              <rect x="588" y="30"  width="280" height="52" rx="3"/>
+              <rect x="588" y="102" width="280" height="52" rx="3"/>
+              <rect x="588" y="174" width="280" height="52" rx="3"/>
+              <rect x="588" y="246" width="280" height="52" rx="3"/>
+            </g>
+
+            <g fill="currentColor">
+              <text x="252" y="52">search_restaurants</text>
+              <text x="252" y="70" opacity="0.6">MCP</text>
+              <text x="252" y="124">find_perks</text>
+              <text x="252" y="142" opacity="0.6">MCP</text>
+              <text x="252" y="196">lookup_dining_highlights</text>
+              <text x="252" y="214" opacity="0.6">MCP</text>
+              <text x="252" y="268">book_table · cancel</text>
+              <text x="252" y="286" opacity="0.6">MCP</text>
+
+              <text x="602" y="52">Google Places API</text>
+              <text x="602" y="70" opacity="0.6">live · fixture when no key</text>
+              <text x="602" y="124">Chroma vector store</text>
+              <text x="602" y="142" opacity="0.6">local embeddings, offline</text>
+              <text x="602" y="196">Tavily web search</text>
+              <text x="602" y="214" opacity="0.6">live menu text + photos</text>
+              <text x="602" y="268">FastAPI + SQLite ledger</text>
+              <text x="602" y="286" opacity="0.6">self-built reservation backend</text>
+            </g>
+
+            <g stroke="currentColor" stroke-width="1.25" marker-end="url(#ar2)">
+              <path d="M 138 70  L 188 70  L 188 56  L 234 56"  fill="none"/>
+              <path d="M 138 110 L 188 110 L 188 128 L 234 128" fill="none"/>
+              <path d="M 138 200 L 188 200 L 188 200 L 234 200" fill="none"/>
+              <path d="M 138 240 L 188 240 L 188 272 L 234 272" fill="none"/>
+              <line x1="464" y1="56"  x2="584" y2="56"/>
+              <line x1="464" y1="128" x2="584" y2="128"/>
+              <line x1="464" y1="200" x2="584" y2="200"/>
+              <line x1="464" y1="272" x2="584" y2="272"/>
+            </g>
+            <text x="524" y="46"  fill="currentColor" text-anchor="middle" opacity="0.6">HTTPS</text>
+            <text x="524" y="118" fill="currentColor" text-anchor="middle" opacity="0.6">vectors</text>
+            <text x="524" y="190" fill="currentColor" text-anchor="middle" opacity="0.6">HTTPS</text>
+            <text x="524" y="262" fill="currentColor" text-anchor="middle" opacity="0.6">SQL</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        Two sources are live (Places, Tavily) and two are local (the vector store, the
+        reservation ledger). Every tool result is tagged with which — so an audit can
+        tell whether a booking rested on real data or a fixture.
+      </figcaption>
+    </figure>
+
+    <p>
+      Booking is deliberately a <strong>self-built mock backend</strong>: OpenTable,
+      Resy and SevenRooms are all partner-gated. It's a real FastAPI service over a
+      real SQLite ledger — restaurant, time, party, guest, status, cancellation stamps —
+      so the transactional half behaves like a system of record rather than a stub.
+    </p>
+
+    <h3>Two orchestrators, one set of tools</h3>
+    <p>
+      There's a second loop worth naming, because it's the one the demo actually runs
+      on. The graph above is the <strong>end-to-end orchestrator</strong>: hand it a
+      request and it goes from sentence to booking on its own. The <strong>conversation
+      loop</strong> is different — it's turn-by-turn, the guest stays in the loop at
+      every choice, and each turn is a bounded round of model-then-tools.
+    </p>
+    <p>
+      They are parallel: neither calls the other, and both reach the world through the
+      same MCP registry. <strong>Long-term memory hangs off the conversation loop
+      only</strong> — which is why there's no "look up profile" node in the graph. The
+      graph is stateless about who you are; the concierge is the part that remembers.
+    </p>
+
+    <figure>
+      <div class="scroller">
+        <svg viewBox="0 0 740 300" role="img" width="740"
+             aria-label="Two orchestrators run in parallel: the LangGraph state machine driven by the demo CLI, and the conversation loop driven by the chat UI. Both call the same MCP tool registry, but only the conversation loop reads and writes the guest's profile memory.">
+          <defs>
+            <marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+            <marker id="ar4a" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)"/>
+            </marker>
+          </defs>
+          <g font-family="Cascadia Mono, ui-monospace, Consolas, monospace" font-size="13">
+            <g fill="none" stroke="currentColor" stroke-width="1.3">
+              <rect x="14"  y="34"  width="150" height="48" rx="3"/>
+              <rect x="14"  y="144" width="150" height="48" rx="3"/>
+              <rect x="204" y="28"  width="230" height="60" rx="3"/>
+              <rect x="204" y="138" width="230" height="60" rx="3"/>
+              <rect x="494" y="83"  width="190" height="60" rx="3"/>
+            </g>
+            <g fill="currentColor" text-anchor="middle">
+              <text x="89"  y="63">python -m agent</text>
+              <text x="89"  y="173">chat UI / REPL</text>
+              <text x="319" y="53">LangGraph graph</text>
+              <text x="319" y="71" font-size="11" opacity="0.62">9 nodes · refine loop · gate</text>
+              <text x="319" y="163">conversation loop</text>
+              <text x="319" y="181" font-size="11" opacity="0.62">model + tools, bounded hops</text>
+              <text x="589" y="108">MCP tool registry</text>
+              <text x="589" y="126" font-size="11" opacity="0.62">search · perks · web · book</text>
+            </g>
+
+            <!-- memory attaches to the conversation loop only -->
+            <rect x="204" y="234" width="230" height="48" rx="3"
+                  fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+            <text x="319" y="263" fill="var(--accent)" text-anchor="middle">profile memory</text>
+            <g stroke="var(--accent)" stroke-width="1.5" fill="none">
+              <path d="M 284 198 L 284 230" marker-end="url(#ar4a)"/>
+              <path d="M 354 234 L 354 202" marker-end="url(#ar4a)"/>
+            </g>
+            <g fill="var(--accent)" font-size="11">
+              <text x="448" y="252">save as they talk,</text>
+              <text x="448" y="268">recall on the next visit</text>
+            </g>
+
+            <g stroke="currentColor" stroke-width="1.3" fill="none" marker-end="url(#ar4)">
+              <line x1="164" y1="58"  x2="200" y2="58"/>
+              <line x1="164" y1="168" x2="200" y2="168"/>
+              <path d="M 434 58  L 464 58  L 464 100 L 490 100"/>
+              <path d="M 434 168 L 464 168 L 464 126 L 490 126"/>
+            </g>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        The same tools, driven two ways. Only the conversation loop touches the guest's
+        profile (amber) — the graph knows about the request in front of it and nothing
+        about who is asking.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="memory">
+    <p class="eyebrow">Memory &amp; retrieval</p>
+    <h2>Three kinds of memory, three kinds of retrieval</h2>
+
+    <p>
+      "Memory" gets used loosely. Here it's three separate things with three different
+      lifetimes, and mixing them up is what makes agents feel broken.
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>Tier</th><th>Holds</th><th>Lives in</th><th>Lasts</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Working</strong></td>
+          <td>The outing being planned — party size, date, chosen restaurant</td>
+          <td>Session state, restated on every tool result</td>
+          <td>The conversation</td>
+        </tr>
+        <tr>
+          <td><strong>Long-term</strong></td>
+          <td>Who the guest is — name, pronouns, email, cuisines, dietary needs, past bookings</td>
+          <td>Chroma, keyed by email</td>
+          <td>Across visits</td>
+        </tr>
+        <tr>
+          <td><strong>Ledger</strong></td>
+          <td>What was actually booked and cancelled</td>
+          <td>SQLite, in the backend</td>
+          <td>Permanent record</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      The working tier earns its keep in a subtle way: every tool result carries back a
+      <code>known_so_far</code> block. Long chats drift, and a model that has to
+      remember an email from twenty turns ago will eventually ask for it twice. Handing
+      the facts back on every call removes the chance to forget.
+    </p>
+
+    <p>
+      Long-term memory has a deliberate asymmetry. Cuisines are a <strong>rolling
+      window of the last three</strong> — taste drifts, and a guest who has booked
+      Italian three times running shouldn't still be filed as a sushi person from one
+      visit last year. Dietary needs are never aged out: an allergy is not a
+      preference. And remembering someone is treated as licence to <em>offer</em>, not
+      to decide — Dino asks whether you want your usual, something near you, or
+      something new.
+    </p>
+
+    <h3>Where the profile meets the ledger</h3>
+    <p>
+      Two of those tiers describe the same reservation, which raises the obvious
+      question: which one is right? The <strong>ledger is the system of record</strong>
+      — it decides what exists. The profile keeps a small copy so Dino can greet you
+      with "your table at Osteria last month" without querying the backend mid-sentence.
+      They're joined by the <strong>confirmation id</strong>.
+    </p>
+
+    <figure>
+      <div class="scroller">
+        <svg viewBox="0 0 800 236" role="img" width="800"
+             aria-label="Booking inserts a ledger row and appends a copy to the profile. Cancelling adds a step: the backend's 24-hour policy decides, the ledger is stamped, and only then is the profile copy flipped to match.">
+          <defs>
+            <marker id="ar5" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+            <marker id="ar5a" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)"/>
+            </marker>
+          </defs>
+          <g font-family="Cascadia Mono, ui-monospace, Consolas, monospace" font-size="13">
+            <!-- column headers name the two stores once -->
+            <g font-size="11" opacity="0.62" fill="currentColor" text-anchor="middle">
+              <text x="440" y="20">SQLite ledger · the record</text>
+              <text x="670" y="20">profile.past_bookings · the copy</text>
+            </g>
+
+            <!-- lane 1: booking -->
+            <g fill="none" stroke="currentColor" stroke-width="1.3">
+              <rect x="14"  y="34" width="100" height="48" rx="3"/>
+              <rect x="350" y="34" width="180" height="48" rx="3"/>
+              <rect x="560" y="34" width="220" height="48" rx="3"/>
+            </g>
+            <g fill="currentColor" text-anchor="middle">
+              <text x="64"  y="63">book</text>
+              <text x="440" y="63">row inserted</text>
+              <text x="670" y="63">copy appended</text>
+            </g>
+            <g stroke="currentColor" stroke-width="1.3" marker-end="url(#ar5)">
+              <line x1="114" y1="58" x2="346" y2="58"/>
+              <line x1="530" y1="58" x2="556" y2="58"/>
+            </g>
+
+            <!-- lane 2: cancelling — same lane, one extra gate -->
+            <g fill="none" stroke="currentColor" stroke-width="1.3">
+              <rect x="14"  y="150" width="100" height="48" rx="3"/>
+              <rect x="350" y="150" width="180" height="48" rx="3"/>
+              <rect x="560" y="150" width="220" height="48" rx="3"/>
+            </g>
+            <rect x="140" y="150" width="180" height="48" rx="3"
+                  fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+            <g fill="currentColor" text-anchor="middle">
+              <text x="64"  y="179">cancel</text>
+              <text x="440" y="179">stamped cancelled</text>
+              <text x="670" y="179">copy flipped to match</text>
+            </g>
+            <g fill="var(--accent)" text-anchor="middle">
+              <text x="230" y="173">24-hour policy</text>
+              <text x="230" y="190" font-size="11" opacity="0.85">the backend decides</text>
+            </g>
+            <g stroke="currentColor" stroke-width="1.3" marker-end="url(#ar5)">
+              <line x1="114" y1="174" x2="136" y2="174"/>
+              <line x1="320" y1="174" x2="346" y2="174"/>
+            </g>
+            <line x1="530" y1="174" x2="556" y2="174" stroke="var(--accent)"
+                  stroke-width="1.6" marker-end="url(#ar5a)"/>
+            <text x="543" y="214" fill="var(--accent)" font-size="11" text-anchor="middle">only then</text>
+
+            <text x="230" y="47" fill="currentColor" font-size="11" text-anchor="middle"
+                  opacity="0.55">no gate — booking is always allowed</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        The ordering is the point. A cancellation is decided by the backend — inside 24
+        hours it refuses and hands back the restaurant's phone number — and the profile
+        copy is only updated once the ledger has actually changed. Memory follows the
+        record; it never leads it.
+      </figcaption>
+    </figure>
+
+    <p>
+      That sync needs its own write path. The union-merge that's right for preferences
+      would <em>append</em> a second copy of the booking rather than update the existing
+      one, so flipping a status is a targeted in-place edit instead. It's a small thing
+      that would quietly corrupt a guest's history if it were wrong — a cancelled table
+      still showing as booked, next visit.
+    </p>
+
+    <h3>Retrieval, where it actually helps</h3>
+    <p>
+      Perks — the offers attached to restaurants — are the RAG surface. They're private
+      data the model has never seen, written as free text, and matched by meaning:
+      <em>"celiac-safe birthday"</em> has to find <em>"gluten-free tasting flight for
+      celebrations"</em> with barely a word in common. That's retrieval's job, not a
+      prompt's.
+    </p>
+
+    <figure>
+      <div class="scroller">
+        <svg viewBox="0 0 820 232" role="img" width="820"
+             aria-label="Hybrid perk retrieval: an eligibility filter removes offers the guest cannot use, then meaning and structural fit are scored separately and blended into one ranking.">
+          <defs>
+            <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <g font-family="Cascadia Mono, ui-monospace, Consolas, monospace" font-size="13">
+            <g fill="none" stroke="currentColor" stroke-width="1.3">
+              <rect x="14"  y="88"  width="160" height="52" rx="3"/>
+              <rect x="464" y="20"  width="160" height="50" rx="3"/>
+              <rect x="464" y="158" width="160" height="50" rx="3"/>
+              <rect x="664" y="88"  width="140" height="52" rx="3"/>
+            </g>
+            <!-- the filter is the load-bearing step, so it carries the accent -->
+            <rect x="224" y="88" width="190" height="52" rx="3"
+                  fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+
+            <g fill="currentColor" text-anchor="middle">
+              <text x="94"  y="119">guest's request</text>
+              <text x="544" y="42">meaning</text>
+              <text x="544" y="60" font-size="11" opacity="0.62">how close in intent</text>
+              <text x="544" y="180">fit</text>
+              <text x="544" y="198" font-size="11" opacity="0.62">how snugly it matches</text>
+              <text x="734" y="119">ranked offers</text>
+            </g>
+            <g text-anchor="middle" fill="var(--accent)">
+              <text x="319" y="112">eligibility filter</text>
+              <text x="319" y="130" font-size="11" opacity="0.85">party · day · expiry</text>
+            </g>
+
+            <g stroke="currentColor" stroke-width="1.3" fill="none" marker-end="url(#ar3)">
+              <line x1="174" y1="114" x2="220" y2="114"/>
+              <path d="M 414 114 L 439 114 L 439 45  L 460 45"/>
+              <path d="M 414 114 L 439 114 L 439 183 L 460 183"/>
+              <path d="M 624 45  L 642 45  L 642 106 L 660 106"/>
+              <path d="M 624 183 L 642 183 L 642 124 L 660 124"/>
+            </g>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        Eligibility (amber) is never left to the embedding. An expired offer, or one
+        needing a bigger party, is dropped <em>before</em> ranking — so a perfect
+        semantic match can't become a discount the guest is unable to claim. What
+        survives is ordered by <span class="mono">0.7 × meaning + 0.3 × fit</span>:
+        meaning-dominant, because fit decides whether an offer <em>can</em> be used
+        while meaning decides whether it's the right one to mention.
+      </figcaption>
+    </figure>
+
+    <div class="metrics">
+      <div class="metric"><div class="value num">1.00</div><span class="label">hit @ 3</span></div>
+      <div class="metric"><div class="value num">1.00</div><span class="label">MRR</span></div>
+      <div class="metric"><div class="value num">24</div><span class="label">perks indexed</span></div>
+      <div class="metric"><div class="value num">104</div><span class="label">tests passing</span></div>
+    </div>
+    <p style="font-size:14px;color:var(--muted)">
+      Measured against a labelled benchmark of ten realistic requests, each paired with
+      the restaurant a good retriever should surface. The blend weight was chosen by
+      sweeping it and keeping what scored best — and guard tests fail the build if a
+      change makes retrieval worse.
+    </p>
+
+    <h3>And a third retrieval surface: the live web</h3>
+    <p>
+      Perks and profiles are ours; what a restaurant is actually <em>known for</em>
+      isn't. A Tavily search fetches cited menu highlights and photos on demand — but
+      pointed only at a restaurant already on the table, so it can't become a general
+      web-search back door around the dining-only rule. It searches the restaurant's
+      own site first, and prefers photos lifted from the pages that matched, which is
+      what makes a chain return the right branch rather than a stock plate of food.
+    </p>
+  </section>
+
+  <!-- ================================================================= -->
+  <section id="surface">
+    <p class="eyebrow">The surface</p>
+    <h2>What the guest sees</h2>
+
+    <p>
+      The chat UI is <strong>Streamlit</strong>, deliberately thin — it wraps the same
+      session API the terminal version uses, so the conversation logic has exactly one
+      home. Two things make it feel like a product rather than a transcript.
+    </p>
+
+    <div class="grid two">
+      <div class="card">
+        <span class="tag">Memory, made visible</span>
+        <p>A side panel shows the guest's long-term profile filling in live as they
+        talk — name, cuisines, dietary needs, past bookings — so the thing the system
+        claims to remember is on screen, not asserted.</p>
+      </div>
+      <div class="card">
+        <span class="tag">Menu cards</span>
+        <p>Each restaurant gets a generated, cuisine-themed card carrying the dishes
+        retrieved from the web and the perk, with a note beside it in italic. Six
+        themes, drawn as SVG — no image files, works offline.</p>
+      </div>
+    </div>
+
+    <p>
+      The cards have one rule that matters more than how they look: <strong>every dish
+      on them is a substring of text actually retrieved</strong>. When a restaurant's
+      menu isn't published online, the card says so rather than inventing something
+      plausible. Reservations appear as cards with a downloadable calendar invite, and
+      a perk triggers a small celebration.
+    </p>
+
+    <h3>The stack, in one list</h3>
+    <table>
+      <tbody>
+        <tr><td><strong>Orchestration</strong></td><td>LangGraph state machine with a checkpointer per conversation thread</td></tr>
+        <tr><td><strong>Tools</strong></td><td>Four MCP servers — search, perks, web highlights, booking</td></tr>
+        <tr><td><strong>Model</strong></td><td>Provider-agnostic: OpenAI or OpenRouter, one config switch</td></tr>
+        <tr><td><strong>Retrieval</strong></td><td>Chroma + local MiniLM embeddings; Tavily for live web</td></tr>
+        <tr><td><strong>Data</strong></td><td>Google Places (live), FastAPI + SQLite reservation ledger (self-built)</td></tr>
+        <tr><td><strong>Interface</strong></td><td>Streamlit chat, terminal REPL, LangGraph Studio</td></tr>
+        <tr><td><strong>Quality</strong></td><td>104 offline tests; a labelled retrieval benchmark; LangSmith tracing</td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      The whole system runs <strong>offline with no API keys at all</strong> — fixtures
+      for search, a local embedding model, an in-process backend, placeholder
+      graphics — and switches to live data the moment a key appears. The same code path
+      runs in both, which is why the demo can't quietly diverge from the real thing.
+    </p>
+
+    <p class="pull">
+      Still to come: the explicit human-approval gate before any booking is confirmed,
+      and the governance trail recording what the agent did, on whose data, and why.
+    </p>
+  </section>
+
+  <footer class="wrap" style="padding-left:0;padding-right:0">
+    Built with Claude Code — an agent, used to build an agent.
+  </footer>
+</main>
+
+<style media="print">
+  /* The screen layout breathes; print pays by the page, so tighten everything
+     proportionally rather than letting it run to nine sheets. */
+  @page { size: Letter; margin: 0.55in 0.55in; }
+  html { font-size: 14px; }
+  body { font-size: 10.2pt; line-height: 1.42; }
+  .wrap { max-width: none; padding: 0; }
+  header.top { border: 0; background: none; }
+  .masthead { padding: 0 0 14px; }
+  h1 { font-size: 27pt; margin-bottom: 8px; }
+  .standfirst { font-size: 11pt; margin-bottom: 12px; }
+  nav.chapters { display: none; }
+  section { padding: 16px 0; }
+  h2 { font-size: 16pt; margin-bottom: 10px; }
+  h3 { font-size: 12pt; margin-top: 12px; }
+  p { margin-bottom: 9px; max-width: none; }
+  .lede { font-size: 10.6pt; }
+  figure { margin: 14px 0 12px; }
+  figure svg { max-width: 82%; }
+  figcaption { font-size: 9pt; margin-top: 7px; }
+  .grid { gap: 9px; margin: 12px 0; }
+  .card { padding: 11px 13px; }
+  .card p { font-size: 9.2pt; }
+  table { font-size: 9.3pt; margin: 12px 0; }
+  td { padding: 6px 10px 6px 0; }
+  .metrics { gap: 20px; margin: 14px 0 4px; }
+  .metric .value { font-size: 22pt; }
+  .pull { font-size: 11pt; margin: 14px 0; }
+  footer { padding: 16px 0 0; }
+  figure, .card, table, .metrics, .pull { break-inside: avoid; }
+  h1, h2, h3 { break-after: avoid; }
+</style>
+</body>
+</html>

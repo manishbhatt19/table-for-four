@@ -1,9 +1,9 @@
 # Table for Four — Project Scoping & Initial Agent Design
 
-**CMU AI Agent Certification — Capstone**
-**Author:** Manish Bhatt
-**Document version:** 1.0 · Initial scoping & design
-**Status:** Design approved; Milestone 1 (search) complete; build of perks/RAG and booking layers pending.
+**CMU AI Agent Certification — Capstone**  
+**Author:** Manish Bhatt  
+**Document version:** 1.1 · updated through the web-highlights layer  
+**Status:** Milestones 1–3.6 complete — search, booking backend, perks/RAG, LangGraph orchestrator, conversational concierge with long-term memory, and live web highlights. Next: the human-approval gate and governance/audit layer (M4).
 
 ---
 
@@ -130,18 +130,19 @@ fixture        embeddings)                            human approval
 
 ### 6.1 Orchestration (LangGraph)
 The agent is modeled as an explicit **state graph**, not a single prompt loop.
-Planned nodes:
+Nodes as built:
 
 | Node | Responsibility |
 |---|---|
-| `parse_request` | Extract structured constraints from free text (cuisine, area, party size, time, dietary, budget). |
+| `parse` | Extract structured constraints from free text (cuisine, area, party size, time, dietary, budget). |
 | `search` | Call the Search MCP tool; get candidate restaurants. |
+| `refine` | On an empty search, relax **one** constraint and loop back to `search`. Bounded by `MAX_ITERATIONS` so it can never spin. |
 | `match_perks` | Call the Perks MCP tool with the user's intent + candidate `place_id`s; attach fitting offers. |
-| `rank_and_explain` | Reason over fit; produce a ranked shortlist with rationale. |
-| `propose_booking` | Draft a booking for the chosen option. |
-| **`human_gate`** | **Interrupt**; present the booking for explicit approval/decline. |
+| `rank` | Reason over fit; produce a ranked shortlist with rationale. |
+| `propose` | Draft a booking for the chosen option. |
+| **`gate`** | **Interrupt**; present the booking for explicit approval/decline. *(Auto-approves today; the real interrupt is M4.)* |
 | `book` | On approval, call the Booking MCP tool; return confirmation. |
-| `audit` | (cross-cutting) log every transition, tool call, and decision. |
+| `audit` | Log the run — reached whether or not the booking went ahead. |
 
 State is carried explicitly between nodes so the flow is inspectable and resumable —
 a core reason for choosing LangGraph over an implicit agent loop.
@@ -158,7 +159,7 @@ a core reason for choosing LangGraph over an implicit agent loop.
   controls both the response shape and the **billing SKU** (cost control).
 - Returns `source: "live" | "fixture"`.
 
-**B. Perks — `find_perks`** *(to build, Milestone 2.5)*
+**B. Perks — `find_perks`** *(built, Milestone 2.5)*
 - Backed by a **Chroma vector database** of **synthetic** perks.
 - **Hybrid retrieval:** semantic vector similarity over an unstructured `blurb`
   (cuisine/vibe/dietary/occasion) **combined with** structured metadata filtering
@@ -168,10 +169,24 @@ a core reason for choosing LangGraph over an implicit agent loop.
 - Perks are keyed to restaurants by `place_id`. Returns match score and
   `source: "synthetic"`.
 
-**C. Booking — `create_booking` / `check_availability`** *(to build, Milestone 2)*
+**C. Booking — `create_booking` / `check_availability` / `cancel_booking`** *(built, Milestone 2)*
 - Backed by a **self-built mock FastAPI reservation backend** (see §7).
 - Exposes availability lookup and reservation creation with a confirmation id.
 - Deterministic/mocked so the transactional path is fully testable offline.
+- Cancellation enforces the **24-hour policy in the backend**, not the model: inside
+  the window it refuses and returns the restaurant's phone/website instead.
+
+**D. Web highlights — `lookup_dining_highlights`** *(built, see §9.2)*
+- Backed by **Tavily** web search, with an offline fixture fallback (placeholder
+  graphics) so the journey still runs with no key.
+- Returns cited menu highlights plus photos for a restaurant already recommended or
+  booked — never an open-ended web search (that would breach the dining-only scope).
+- Scoped to the restaurant's **own domain first**, widening to the open web only when
+  that returns nothing about the food; photos lifted from the matched pages are
+  preferred over a generic image search, which is what keeps a chain on the right
+  branch.
+- Feeds the **generated menu cards** (§9.1), whose dish lines are strictly extractive
+  from retrieved text.
 
 ### 6.3 Human-in-the-loop gate
 Before any booking is written, the graph **interrupts** and surfaces the proposed
@@ -197,7 +212,7 @@ lifetimes and responsibilities clear.
 | Tier | Holds | Implementation | Milestone |
 |---|---|---|---|
 | **Working memory** | The in-flight request: parsed constraints, candidate restaurants, matched perks, the chosen option, the pending booking. | LangGraph **typed `State`** carried across nodes, persisted by a **checkpointer** keyed per conversation **thread**. Enables the human-gate **pause/resume**. | M3 / M4 |
-| **Long-term profile memory** | Member preferences: dietary defaults, favored cuisines/price, and past bookings. | A small **preferences store** keyed by user; read at `parse_request` to seed constraints, written after a successful booking. | Interface in M3; populated in M5 |
+| **Long-term profile memory** | Member preferences: name/pronouns, email, dietary defaults, favored cuisines, party size, kids, and past bookings. | A **Chroma** store keyed by email, with two retrieval modes (key lookup + semantic recall). Read when a guest is recognised, written as they talk. Cuisines are a **rolling window of the last three** — taste drifts — while dietary needs are never aged out. | ✅ Built (M3.5) |
 | **Audit / episodic memory** | Every consequential event: tool call + args, data `source`, human approval/decline, booking outcome. | Append-only **governance log** (§6.4); doubles as booking history. | M4 |
 
 ### 6.6 Control flow & reasoning loops
@@ -265,36 +280,46 @@ dietary/occasion themes (to give semantic retrieval real signal).
 | 2 | Mock booking FastAPI + booking MCP server | ✅ Complete |
 | 2.5 | **Perks / RAG:** synthetic perks → Chroma → `find_perks` MCP tool | ✅ Complete |
 | 3 | LangGraph orchestrator; end-to-end happy path (search → perks → book) | ✅ Complete |
+| 3.5 | Conversational concierge (Dino) + long-term member memory in Chroma | ✅ Complete |
+| 3.6 | Web highlights via Tavily + generated menu cards (§9.1, §9.2) | ✅ Complete |
 | 4 | Human-in-the-loop gate + governance/audit logging | ⬜ Next |
-| 5 | *(Stretch)* member preferences, model comparison, **illustrative restaurant imagery**, polished demo | ⬜ |
+| 5 | *(Stretch)* model comparison, polished demo | ⬜ |
 
-### 9.2 Web enrichment via Tavily *(planned, after M4)*
-An optional **live-mode** enrichment tool (`enrich_restaurant`) that uses Tavily web
-search to add *qualitative* context Google Places doesn't provide — recent reviews,
-signature dishes, ambiance, dietary reputation, press/awards — to strengthen the
-ranking rationale and the recommendation narrative.
+### 9.2 Web enrichment via Tavily *(built, ahead of M4)*
+Shipped as **`lookup_dining_highlights`** (§6.2 D) — the tool that adds the
+*qualitative* context Google Places doesn't carry: signature dishes, what a room
+looks like, what diners keep mentioning. Built earlier than planned because it is
+what makes the chat feel like a concierge rather than a booking form.
 - **Scope:** enrichment only; it does **not** replace Places for core search (Places
   is more structured for constraint matching).
-- **Live-only:** the fixture restaurants are fictional, so web search has nothing
-  true to find offline; the tool runs only against real (live Places) results, and
-  the graph still works without it.
-- **Representational integrity:** cite sources and attribute snippets to the correct
-  venue — never mix web context from a different restaurant.
-- **Sequencing:** after M4 (the core responsible-AI loop); belongs with the M5
-  enhancements.
+- **Bounded to the conversation:** it will only look up a restaurant already
+  recommended or booked in this session, so it cannot become a general web-search
+  back door around the dining-only guardrail.
+- **Offline behaviour:** rather than being live-only as first scoped, a fixture path
+  returns seeded highlights with locally generated placeholder graphics, so the whole
+  journey still demos with no key.
+- **Representational integrity:** every snippet carries its source domain, photos are
+  captioned with where they came from and never presented as the restaurant's own,
+  and the model is instructed to attribute dishes ("diners keep mentioning…") rather
+  than promise them, since menus change.
 
-### 9.1 Milestone 5 — illustrative restaurant imagery *(stretch)*
-A UX-polish layer that shows a representative image alongside each option to make
-the concierge feel richer in the demo. Scoped deliberately to respect
-representational integrity (see §10):
-- **Storage:** images live in a **folder**; each restaurant record carries a
-  `photo` *reference/path* — image bytes are **never** stored in the vector DB.
-- **Sourcing:** *live mode* uses **real Google Places photos** (authentic, of the
-  actual place); *offline mode* uses **generic, cuisine-themed illustrative
-  images**, clearly labeled — never presented as a depiction of a specific named
-  restaurant.
-- **Sequencing:** presentation polish, not agent capability — built only after the
-  core loop (search → perks → human gate → book) works end-to-end.
+### 9.1 Restaurant imagery *(built, delivered differently than scoped)*
+The intent — a richer visual surface that respects representational integrity (§10) —
+shipped, but not as a photo library. Two layers, both avoiding the original plan's
+weakness (a folder of stock images that must never be mistaken for a real venue):
+- **Generated menu cards** ([`agent/menu_card.py`](../agent/menu_card.py)): one
+  cuisine-themed SVG card per restaurant, carrying the retrieved dish highlights and
+  the perk. **Six themes**, rendered as data URIs — no image files, no storage
+  question, works offline. Nothing depicts a specific venue, so nothing can
+  misrepresent one.
+- **Real photos, when they exist**, from the web-highlights tool (§9.2), preferring
+  images lifted from the pages actually about that restaurant, each captioned with
+  its source domain.
+- **Honesty rule:** every dish line on a card is a **substring of retrieved text**.
+  Where a menu isn't published online, the card says so rather than inventing a
+  plausible dish.
+- **Storage:** unchanged from the original scoping — image bytes are **never** put in
+  the vector DB.
 - *(Optional stretch-within-stretch:* multimodal CLIP embeddings to enable
   visually-similar retrieval — the one design that would let images genuinely earn
   a place in the vector store.)

@@ -134,7 +134,7 @@ In the concierge journey ([`agent/concierge_chat.py`](../agent/concierge_chat.py
 1. Search returns candidate restaurants (Google Places or fixture).
 2. `find_perks` is called **scoped to those candidates' `place_id`s** — so perks
    line up with the exact shortlist, and the best perk per restaurant is attached.
-3. Ava presents the shortlist and names which one or two carry an offer.
+3. Dino presents the shortlist and names which one or two carry an offer.
 
 **A RAG nuance — semantic-only fallback on live data.** Our perks are synthetic and
 keyed to the *fixture* restaurants. With **live** Google results (real, different
