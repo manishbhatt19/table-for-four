@@ -6,7 +6,7 @@ rather than one-shot auto-booking:
     welcome -> understand intent -> gather missing details (incl. email)
       -> recommend restaurants (flagging which carry a perk)
       -> guest picks one -> show available times (mock data)
-      -> book it (or refine and search again) -> share dining tips
+      -> book it (or refine and search again) -> share dining tips + what to order
       -> offer another booking -> close, remembering the guest for next time.
 
 The guest stays in the loop at the choice points (which restaurant, which time).
@@ -20,6 +20,10 @@ What it demonstrates:
   are saved to `agent.profile_memory`, keyed by email, so a returning guest is
   recognized and their usuals can be reused.
 * **Tool use.** The model reaches the world only through the tools below.
+* **Live web retrieval (Tavily).** `show_dining_highlights` fetches cited menu
+  highlights and photos for a restaurant the guest is actually considering —
+  scoped to that restaurant, attributed to its source, and rendered in the UI
+  rather than pasted into the reply.
 * **Deterministic guardrails.** Dining-only scope; booking gated on a real email;
   emails/restaurants/times must be ones actually surfaced (no fabrication);
   duplicate bookings are idempotent.
@@ -41,13 +45,14 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from agent import profile_memory, reasoning
+from agent import menu_card, profile_memory, reasoning
 from agent.config import get_chat_llm
 from agent.tools import (
     cancel_booking,
     check_availability,
     create_booking,
     find_perks,
+    lookup_dining_highlights,
     search_restaurants,
 )
 
@@ -89,13 +94,31 @@ back to the table. Never answer the off-topic question, even partially.
    then offer to reuse their usual preferences. A guest is also recognized the
    moment they give a known **email** (see `set_confirmation_email`) — the instant
    that happens, pivot to a warm welcome-back even if you already greeted them.
+   Welcoming them back is *not* permission to start booking their usual: go to 2b.
 2. **Understand their intent** — what kind of outing is this?
+2b. **Ask how they'd like to choose — never assume.** Remembering a guest's usuals
+   is for *offering*, not for deciding. Before you search, put the choice to them
+   in one friendly question with three ways in:
+     - **their usuals** — "shall I look at Italian again, like your last few?"
+     - **by area** — "or shall we just find something good near you?"
+     - **something new** — "or are you in the mood to try a cuisine you haven't yet?"
+   Name their actual saved cuisines when you offer the first option, and wait for
+   an answer before searching. If they pick *something new*, deliberately search a
+   cuisine that is NOT in their saved list and say that's what you're doing. This
+   costs one extra exchange and is worth it: guessing wrong wastes far more of
+   their time, and a guest who feels asked rather than assumed about comes back.
+   Skip this only if the guest has already told you what they want in this session.
 3. **Gather what's missing** (only what wasn't already said): their email, the
    date/time, **party size (how many people) — this is required**, location/area,
    cuisine, and any dietary needs or kids (with ages / high-chair needs). Save
-   durable details with `remember_guest_details` as they arrive. Ask for the email
-   as part of this, framed as where to send the confirmation. Do NOT assume a party
+   durable details with `remember_guest_details` as they arrive. Do NOT assume a party
    size — if the guest hasn't told you how many people, ask before you book.
+   **Never ask for something you already have.** Every tool result carries a
+   `known_so_far` block; treat it as the truth about this session. In particular,
+   if `known_so_far.email_on_file` is set, the email is DONE — do not ask for it
+   again at any point, including at booking time. Confirm it if you must ("I'll
+   send the confirmation to sam@example.com — still the best address?"), but never
+   re-request it. Only ask for the email when it is genuinely absent.
 4. **Recommend** — call `recommend_restaurants` and present a short shortlist.
    Clearly mention which one or two carry a **special perk** (offer), by name. If
    the result includes a `perk_note` saying the perks are samples, present those as
@@ -113,10 +136,13 @@ back to the table. Never answer the off-topic question, even partially.
    drift.) If there's no availability, or they want something different, gather the
    new detail and go back to step 4/5 and offer an alternative. Never claim a
    booking is made until `book_table` returns a confirmation id.
-7. **After booking**, share 2–3 brief, practical **dining tips** so they're
+7. **After booking**, call `show_dining_highlights` once for the restaurant you
+   just booked, then share 2–3 brief, practical **dining tips** so they're
    prepared (e.g. arrive a few minutes early, mention the reservation name and any
-   dietary need to the host, note the perk at the table). Keep tips general — do
-   not invent specifics about the restaurant.
+   dietary need to the host, note the perk at the table) **plus one "what to
+   order" line drawn from the highlights**. Any specific claim about the food must
+   come from that tool result — never invent a dish, and say where it came from
+   ("diners keep mentioning…", "their site lists…").
 8. **Offer another** — ask whether they'd like to book another restaurant for a
    different day. If yes, return to step 3/4 for the new outing.
 9. **Cancellations** — if a guest wants to cancel, find the reservation's
@@ -144,6 +170,17 @@ back to the table. Never answer the off-topic question, even partially.
 - `cancel_reservation` — cancel a booking by its confirmation id. The 24-hour
   policy is enforced by the system; honor a `too_late` result exactly as described
   in step 9 (never claim a cancellation the tool didn't confirm).
+- `show_dining_highlights` — look up what a restaurant is known for (menu
+  highlights, signature dishes) with photos, from the public web. Call it whenever
+  a guest asks what's good there, what a dish or the room looks like, or asks to
+  see pictures — and once automatically after a booking (step 7). It only works
+  for restaurants you have already recommended or booked; if it returns
+  `unknown_restaurant`, recommend first rather than guessing.
+  **Three rules when you use it:** (a) only mention dishes that appear in the
+  result; (b) attribute them ("diners keep mentioning…"), never as a promise, since
+  menus change; (c) the photos are shown to the guest automatically in the app —
+  say something like "I've popped a couple of photos below" rather than pasting
+  image links into your reply.
 
 We don't actually send email in this demo, but always tell the guest the
 confirmation will be sent to their address.
@@ -298,6 +335,46 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "show_dining_highlights",
+            "description": (
+                "Look up what a restaurant is known for — menu highlights, signature "
+                "dishes — with photos, from the public web. Use it when the guest asks "
+                "what's good there, what a dish looks like, or wants to see pictures, "
+                "and once after a booking to add a 'what to order' note. Works only "
+                "for restaurants already recommended or booked in this conversation. "
+                "Photos are rendered to the guest automatically; don't paste image "
+                "links. Only repeat dishes that appear in the result, and attribute "
+                "them rather than promising them."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "place_id": {
+                        "type": "string",
+                        "description": "Id of a recommended or booked restaurant (preferred).",
+                    },
+                    "restaurant_name": {
+                        "type": "string",
+                        "description": "Its name, if you don't have the place_id.",
+                    },
+                    "focus": {
+                        "type": "string",
+                        "description": (
+                            "What the guest asked about, in their terms — this steers "
+                            "the photo search, so be specific about what they want to "
+                            "SEE. Use 'what the dining room looks like' / 'the "
+                            "interior' / 'the atmosphere' for pictures of the place "
+                            "itself, and 'signature dishes' / 'what to order' for food."
+                        ),
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 
@@ -314,6 +391,7 @@ class ConciergeSession:
     availability: dict[str, Any] | None = None                      # last times shown
     bookings: dict[str, Any] = field(default_factory=dict)          # key -> result (idempotency)
     pending: dict[str, Any] = field(default_factory=dict)           # outing being planned
+    media: list[dict[str, Any]] = field(default_factory=list)       # web highlights for the UI
 
     @property
     def display_name(self) -> str:
@@ -699,9 +777,13 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
     }
     session.bookings[key] = result
     session.pending.update({"time": time, "confirmation_id": booking.get("confirmation_id")})
-    # Remember the booking + reusable preferences for next time.
+    # Remember the booking + reusable preferences for next time. The booked
+    # restaurant's cuisine counts as a fresh preference signal — an actual booking
+    # is better evidence of taste than anything the guest said in passing — and
+    # the store keeps only the most recent few.
     session.profile = profile_memory.remember(session.member_id, {
         "party_size": party_size,
+        "cuisines": [rec["cuisine"]] if rec.get("cuisine") else None,
         "past_bookings": [{
             "restaurant": rec["name"], "confirmation_id": booking.get("confirmation_id"),
             "place_id": place_id, "date": iso, "time": time, "party_size": party_size,
@@ -752,6 +834,117 @@ def _handle_cancel(session: ConciergeSession, args: dict[str, Any]) -> str:
     return json.dumps(result, ensure_ascii=False)  # already_cancelled | not_found
 
 
+def _resolve_restaurant(
+    session: ConciergeSession, place_id: str | None, name: str | None
+) -> dict[str, Any] | None:
+    """Find a restaurant the guest has actually been shown, by id or by name.
+
+    Deliberately narrow. The web lookup is the one tool that reaches the open
+    internet, so it is only ever pointed at a restaurant already on the table —
+    which keeps it from becoming a general-purpose search back door around the
+    dining-only guardrail.
+    """
+    if place_id and place_id in session.recommendations:
+        return session.recommendations[place_id]
+
+    known: list[dict[str, Any]] = list(session.recommendations.values())
+    # Booked restaurants stay reachable after a later search replaced the shortlist.
+    known += [
+        {
+            "place_id": b.get("place_id"),
+            "name": b.get("restaurant"),
+            "address": b.get("address"),
+            "website": b.get("website"),
+        }
+        for b in session.bookings.values()
+    ]
+    if place_id:
+        for r in known:
+            if r.get("place_id") == place_id:
+                return r
+
+    wanted = (name or "").strip().lower()
+    if not wanted:
+        # No hint at all: if there's exactly one thing in play, that's the one.
+        return known[0] if len(known) == 1 else None
+    for r in known:
+        rname = (r.get("name") or "").lower()
+        if rname and (wanted == rname or wanted in rname or rname in wanted):
+            return r
+    return None
+
+
+def _handle_highlights(session: ConciergeSession, args: dict[str, Any]) -> str:
+    rec = _resolve_restaurant(session, args.get("place_id"), args.get("restaurant_name"))
+    if rec is None:
+        return json.dumps({
+            "status": "unknown_restaurant",
+            "message": "I can only look up restaurants already recommended or booked "
+                       "in this conversation. Call recommend_restaurants first, or ask "
+                       "the guest which of the options they meant.",
+        }, ensure_ascii=False)
+
+    focus = (args.get("focus") or "").strip() or "menu highlights and signature dishes"
+    result = lookup_dining_highlights(
+        restaurant_name=rec["name"],
+        address=rec.get("address"),
+        website=rec.get("website"),
+        place_id=rec.get("place_id"),
+        focus=focus,
+    )
+
+    if not result.get("highlights") and not result.get("images"):
+        return json.dumps({
+            "status": "nothing_found",
+            "restaurant": rec["name"],
+            "message": "The web lookup came back empty. Say you couldn't find much "
+                       "about the menu online and offer to ask the restaurant when "
+                       "they call — do NOT describe dishes from your own knowledge.",
+        }, ensure_ascii=False)
+
+    # A generated, cuisine-themed card fronts the web photos: it gives every
+    # restaurant one consistent, designed panel carrying the dishes we actually
+    # retrieved and the perk, instead of leading with whatever crop the web had.
+    card = menu_card.card_for_restaurant(
+        restaurant=rec["name"],
+        cuisine=rec.get("cuisine"),
+        highlights=result.get("highlights", []),
+        perk=rec.get("perk_title"),
+        perk_is_sample=rec.get("perk_sample", False),
+    )
+
+    # Images go to the UI, not into the model's reply — it would only paste raw
+    # URLs into the chat. The text half stays in the transcript for grounding.
+    session.media.append({
+        "restaurant": rec["name"],
+        "focus": focus,
+        "card": card,
+        "images": result.get("images", []),
+        "source": result.get("source"),
+        "citations": result.get("citations", []),
+    })
+
+    return json.dumps({
+        "status": "ok",
+        "restaurant": rec["name"],
+        "source": result.get("source"),
+        "scope": result.get("scope"),
+        "highlights": result.get("highlights", []),
+        "dishes_on_card": card["dishes"],
+        "images_shown_to_guest": len(result.get("images", [])),
+        "disclaimer": result.get("disclaimer"),
+        "note_shown_to_guest": card.get("note"),
+        "instruction": "A menu card, the note in `note_shown_to_guest`, and any photos "
+                       "are ALREADY displayed to the guest below your reply — never "
+                       "paste image URLs, and don't repeat that note back word for "
+                       "word. Point at it in one short line ('I've put their standouts "
+                       "on a card below') and add at most one dish of your own from "
+                       "`highlights`, attributed. If `dishes_on_card` is empty, don't "
+                       "pretend to know what's good — say the menu wasn't published "
+                       "online.",
+    }, ensure_ascii=False)
+
+
 _HANDLERS = {
     "remember_guest_details": _handle_remember,
     "recall_guest_profile": _handle_recall,
@@ -760,7 +953,26 @@ _HANDLERS = {
     "check_availability_times": _handle_times,
     "book_table": _handle_book,
     "cancel_reservation": _handle_cancel,
+    "show_dining_highlights": _handle_highlights,
 }
+
+
+def _working_memory(session: ConciergeSession) -> dict[str, Any]:
+    """What we already know, restated to the model on every tool result.
+
+    Long chats drift: the model forgets a detail the guest gave twenty turns ago
+    and asks for it again — the email being the one guests notice and resent.
+    Rather than trusting it to remember, every tool result carries the facts back.
+    """
+    profile = session.profile or {}
+    known = {
+        "guest_name": profile.get("name"),
+        "email_on_file": profile.get("email"),
+        "party_size": session.pending.get("party_size") or profile.get("party_size"),
+        "date": session.pending.get("date"),
+        "restaurant": session.pending.get("restaurant"),
+    }
+    return {k: v for k, v in known.items() if v}
 
 
 def _dispatch(session: ConciergeSession, name: str, args: dict[str, Any]) -> str:
@@ -768,9 +980,27 @@ def _dispatch(session: ConciergeSession, name: str, args: dict[str, Any]) -> str
     if handler is None:
         return f"Unknown tool: {name}"
     try:
-        return handler(session, args)
+        result = handler(session, args)
     except Exception as exc:  # keep the chat alive if a tool trips
         return f"Tool '{name}' failed: {exc}"
+
+    known = _working_memory(session)
+    if not known:
+        return result
+    try:
+        payload = json.loads(result)
+    except (ValueError, TypeError):
+        return result
+    if not isinstance(payload, dict):
+        return result
+    payload["known_so_far"] = known
+    if known.get("email_on_file"):
+        payload["do_not_ask"] = (
+            f"The guest's email is already on file ({known['email_on_file']}). Do NOT "
+            "ask for it again this session — if you need to reference it, confirm it "
+            "instead ('I'll send the confirmation to …, still right?')."
+        )
+    return json.dumps(payload, ensure_ascii=False)
 
 
 # --- Conversation turn -------------------------------------------------------

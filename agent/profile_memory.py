@@ -40,6 +40,11 @@ COLLECTION_NAME = "member_profiles"
 # values into the existing list (deduped, order-preserving) instead of replacing.
 _LIST_FIELDS = ("dietary", "cuisines", "interests", "past_bookings")
 
+# List fields that hold *current taste* rather than a permanent record: keep only
+# the N most recently mentioned, newest last. Deliberately excludes `dietary`
+# (an allergy is not a passing preference) and `past_bookings` (that's history).
+_RECENCY_CAPPED = {"cuisines": 3}
+
 _EMBED = embedding_functions.DefaultEmbeddingFunction()  # all-MiniLM-L6-v2, local
 
 _collection: Collection | None = None  # lazy persistent singleton
@@ -162,17 +167,33 @@ def _merge(current: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
 
     None values in `updates` are ignored so a partial update never blanks a
     field the guest already gave us.
+
+    Fields in `_RECENCY_CAPPED` are treated as *recent taste* rather than a
+    permanent record: a repeat mention moves to the end of the list and only the
+    most recent few are kept. Tastes drift, and a guest who has booked Italian
+    three times running shouldn't still be pegged as a sushi person from one visit
+    a year ago. Uncapped fields (dietary above all) keep everything — an allergy is
+    not a preference and must never be aged out.
     """
     merged = dict(current)
     for key, value in updates.items():
         if value is None:
             continue
         if key in _LIST_FIELDS:
+            incoming = value if isinstance(value, list) else [value]
+            cap = _RECENCY_CAPPED.get(key)
             existing = list(merged.get(key) or [])
-            for item in value if isinstance(value, list) else [value]:
-                if item not in existing:
-                    existing.append(item)
-            merged[key] = existing
+            if cap:
+                # Re-mentioning something makes it recent again: drop the old
+                # position, re-append, then keep the tail.
+                existing = [item for item in existing if item not in incoming]
+                existing += [item for item in incoming if item is not None]
+                merged[key] = existing[-cap:]
+            else:
+                for item in incoming:
+                    if item not in existing:
+                        existing.append(item)
+                merged[key] = existing
         else:
             merged[key] = value
     return merged

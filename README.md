@@ -36,8 +36,10 @@ pattern for agent prototyping against partner-gated downstream systems.
 | 2 — Mock booking FastAPI + booking MCP server | ✅ working |
 | 2.5 — Perks/RAG: synthetic perks → Chroma → `find_perks` MCP tool | ✅ working |
 | 3 — LangGraph orchestrator, end-to-end happy path | ✅ working |
+| 3.5 — Conversational concierge (Dino) + long-term member memory | ✅ working |
+| 3.6 — Web highlights: Tavily menu/photo lookup → generated menu cards | ✅ working |
 | 4 — Human-in-loop gate + governance/audit logging | ⬜ next |
-| 5 (stretch) — member preferences, model comparison, illustrative imagery, demo | ⬜ |
+| 5 (stretch) — model comparison, polished demo | ⬜ |
 
 ## Getting started
 
@@ -135,6 +137,32 @@ Long-term member memory ([agent/profile_memory.py](agent/profile_memory.py)) run
 on the same stack with two retrieval modes: key lookup and semantic recall
 (`find_members("the guest who loves Sicilian wine")`).
 
+## Live web highlights — menu, dishes, photos (Tavily)
+
+The third retrieval surface is the **open web**. When a guest asks *"what's good
+there?"* or *"can I see the place?"*, and once automatically after a booking,
+Dino calls `show_dining_highlights` ([mcp_servers/web_server.py](mcp_servers/web_server.py))
+— a Tavily search that returns a few **cited** menu highlights plus photos.
+
+Three constraints keep it honest and on-scope:
+
+- **It can only be pointed at a restaurant already recommended or booked** in this
+  conversation, so it can't become a general web-search back door around the
+  dining-only guardrail.
+- **Scoped to the restaurant's own site first** (Places gives us `websiteUri`),
+  widening to the open web only if that returns nothing.
+- **Nothing is passed off as official.** Every snippet carries its source domain,
+  photos are captioned with where they came from, and the model is told to
+  attribute dishes ("diners keep mentioning…") rather than promise them.
+
+Photos render in the Streamlit UI beneath Dino's reply, never as pasted URLs.
+Without a `TAVILY_API_KEY` the tool serves offline fixture highlights with locally
+generated placeholder graphics, so the demo still runs end-to-end with no key.
+
+```bash
+uv run mcp dev mcp_servers/web_server.py    # inspect the tool interactively
+```
+
 ## Repo layout
 
 ```
@@ -146,7 +174,8 @@ table-for-four/
 │   ├── perks_eval.py         # ✅ labeled retrieval eval (hit@k / precision / MRR)
 │   ├── perks_inspect.py      # ✅ CLI: inspect a query's ranked results + scores
 │   ├── booking_server.py     # ✅ booking + cancellation tools over the backend (MCP)
-│   └── fixtures/             # offline fixtures: places + perks_seed.json
+│   ├── web_server.py         # ✅ live menu highlights + photos via Tavily (MCP)
+│   └── fixtures/             # offline fixtures: places + perks + web highlights
 ├── mock_booking_api/         # ✅ FastAPI reservation backend + SQLite ledger (self-built mock)
 ├── agent/                    # ✅ (M3) LangGraph orchestrator
 │   ├── graph.py              #     state machine + refine-retry loop + checkpointer

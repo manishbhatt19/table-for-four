@@ -1,0 +1,138 @@
+{
+  "_comment": "Offline fixture for the web-highlights tool. Mirrors the shape we normalize Tavily search results into, so the same code path runs with or without a TAVILY_API_KEY. Image URLs are generated as local placeholder graphics at runtime (see web_server._placeholder_image) — nothing here hotlinks the real web.",
+  "default": {
+    "highlights": [
+      {
+        "title": "What to order",
+        "snippet": "Regulars point to the house specials and the chef's tasting selection as the dishes worth building a meal around. Ask your server what came in fresh that day.",
+        "url": "https://example.com/dining-guide",
+        "source": "example.com"
+      }
+    ],
+    "dishes": ["Chef's tasting selection", "House special"]
+  },
+  "restaurants": {
+    "fixture-osteria-1": {
+      "highlights": [
+        {
+          "title": "Osteria Midtown — a Midtown classic for sharing",
+          "snippet": "The kitchen built its reputation on hand-rolled pasta: the cacio e pepe arrives finished tableside, and the family-style antipasti board is the thing to start with when there are four of you.",
+          "url": "https://example.com/reviews/osteria-midtown",
+          "source": "example.com"
+        },
+        {
+          "title": "Menu — Osteria Midtown",
+          "snippet": "Signature plates include cacio e pepe, veal osso buco, and a rotating seasonal risotto. Large tables are steered toward the sharing platters.",
+          "url": "https://example.com/osteria-midtown/menu",
+          "source": "example.com"
+        }
+      ],
+      "dishes": ["Cacio e pepe", "Antipasti sharing board", "Osso buco"]
+    },
+    "fixture-trattoria-2": {
+      "highlights": [
+        {
+          "title": "Trattoria del Sole — Sicilian wine and slow cooking",
+          "snippet": "A sommelier-led regional wine list is the draw here, paired with a short menu of Sicilian braises. The pistachio-crusted swordfish is the dish people come back for.",
+          "url": "https://example.com/reviews/trattoria-del-sole",
+          "source": "example.com"
+        }
+      ],
+      "dishes": ["Pistachio-crusted swordfish", "Sicilian wine flight"]
+    },
+    "fixture-pizzeria-3": {
+      "highlights": [
+        {
+          "title": "Nonna's Gluten-Free Kitchen — a fully celiac-safe kitchen",
+          "snippet": "Everything leaving this kitchen is gluten-free, so there is no cross-contamination question to ask. The tasting flight of small plates is how most first-timers order.",
+          "url": "https://example.com/reviews/nonnas-gf",
+          "source": "example.com"
+        },
+        {
+          "title": "Menu — Nonna's Gluten-Free Kitchen",
+          "snippet": "Gluten-free tasting flight, wood-fired margherita on a house GF base, and a flourless chocolate torte that regulars call the best in the neighbourhood.",
+          "url": "https://example.com/nonnas-gf/menu",
+          "source": "example.com"
+        }
+      ],
+      "dishes": ["Gluten-free tasting flight", "Wood-fired margherita", "Flourless chocolate torte"]
+    },
+    "fixture-bistro-4": {
+      "highlights": [
+        {
+          "title": "Le Petit Bistro — candlelit and unhurried",
+          "snippet": "A small room built for two-tops. The dégustation menu changes weekly; the duck confit and the tarte tatin are the fixtures nobody will let them take off.",
+          "url": "https://example.com/reviews/le-petit-bistro",
+          "source": "example.com"
+        }
+      ],
+      "dishes": ["Duck confit", "Tarte tatin", "Weekly dégustation"]
+    },
+    "fixture-sakura-5": {
+      "highlights": [
+        {
+          "title": "Sakura Omakase — sit at the counter",
+          "snippet": "Omakase only, twelve to sixteen courses depending on the day's fish. The counter seats are the experience; tables miss half of it.",
+          "url": "https://example.com/reviews/sakura-omakase",
+          "source": "example.com"
+        }
+      ],
+      "dishes": ["Chef's omakase", "Otoro nigiri", "Tamago"]
+    },
+    "fixture-taqueria-6": {
+      "highlights": [
+        {
+          "title": "Taqueria La Luz — late-night al pastor",
+          "snippet": "The trompo runs all evening and the al pastor tacos are the reason for the queue. Order the quesabirria too, and eat standing up if you have to.",
+          "url": "https://example.com/reviews/taqueria-la-luz",
+          "source": "example.com"
+        }
+      ],
+      "dishes": ["Al pastor tacos", "Quesabirria", "Elote"]
+    },
+    "fixture-spice-7": {
+      "highlights": [
+        {
+          "title": "Spice Route — regional Indian, properly spiced",
+          "snippet": "They will ask how hot you want it and they mean it. The vegetarian thali is the best way to sample the range, and the dal makhani is cooked overnight.",
+          "url": "https://example.com/reviews/spice-route",
+          "source": "example.com"
+        }
+      ],
+      "dishes": ["Vegetarian thali", "Dal makhani", "Lamb rogan josh"]
+    },
+    "fixture-primecut-8": {
+      "highlights": [
+        {
+          "title": "The Prime Cut — dry-aged and quiet enough to talk",
+          "snippet": "A steakhouse built for business dinners: dry-aged ribeye, a serious cellar, and booths spaced far enough apart to hold a conversation.",
+          "url": "https://example.com/reviews/the-prime-cut",
+          "source": "example.com"
+        }
+      ],
+      "dishes": ["45-day dry-aged ribeye", "Creamed spinach", "Bone-in filet"]
+    },
+    "fixture-orchid-9": {
+      "highlights": [
+        {
+          "title": "Bangkok Orchid — the vegan side of the menu is not an afterthought",
+          "snippet": "Half the menu can be made vegan without losing the fish-sauce depth, which is rare. The green curry and the som tam are where to start.",
+          "url": "https://example.com/reviews/bangkok-orchid",
+          "source": "example.com"
+        }
+      ],
+      "dishes": ["Green curry", "Som tam", "Pad kee mao"]
+    },
+    "fixture-verdant-10": {
+      "highlights": [
+        {
+          "title": "Verdant — vegetables treated like the main event",
+          "snippet": "A seasonal plant-based tasting menu that changes with what's good that month. The charred hispi cabbage has been on since opening because guests revolt when it isn't.",
+          "url": "https://example.com/reviews/verdant",
+          "source": "example.com"
+        }
+      ],
+      "dishes": ["Charred hispi cabbage", "Seasonal chef's tasting", "Beetroot tartare"]
+    }
+  }
+}

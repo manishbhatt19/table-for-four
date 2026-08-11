@@ -17,11 +17,13 @@ from mcp_servers.booking_server import (
 )
 from mcp_servers.perks_server import find_perks
 from mcp_servers.search_server import search_restaurants
+from mcp_servers.web_server import lookup_dining_highlights
 
 # The capability registry the orchestrator reasons about.
 TOOLS = {
     "search_restaurants": search_restaurants,
     "find_perks": find_perks,
+    "lookup_dining_highlights": lookup_dining_highlights,
     "check_availability": check_availability,
     "create_booking": create_booking,
     "get_booking": get_booking,
@@ -32,6 +34,7 @@ __all__ = [
     "TOOLS",
     "search_restaurants",
     "find_perks",
+    "lookup_dining_highlights",
     "check_availability",
     "create_booking",
     "get_booking",

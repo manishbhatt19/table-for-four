@@ -5,6 +5,8 @@ beyond the one-time local embedding-model download Chroma caches) through the
 pure functions that take a `Collection`, so no LLM or chat loop is involved.
 """
 
+from datetime import date, timedelta
+
 import chromadb
 import pytest
 
@@ -21,6 +23,10 @@ from agent.profile_memory import (
     set_email,
     update_profile,
 )
+
+# `_handle_book` refuses a date in the past, so booking tests must aim at a date
+# that stays in the future as the calendar moves — never a hardcoded one.
+FUTURE_DATE = (date.today() + timedelta(days=7)).isoformat()
 
 
 @pytest.fixture()
@@ -81,10 +87,43 @@ def test_update_merges_scalars_and_unions_lists(collection):
     update_profile(collection, "Manish", {"home_location": "Midtown"})
 
     p = load_profile(collection, "manish")
-    # list field unions and dedupes; scalar fields overwrite/persist
-    assert p["cuisines"] == ["italian", "japanese"]
+    # Cuisines dedupe and are ordered by recency, newest last — mentioning italian
+    # again in the second update moves it after japanese.
+    assert p["cuisines"] == ["japanese", "italian"]
     assert p["pronouns"] == "he/him"
     assert p["home_location"] == "Midtown"
+
+
+def test_cuisines_keep_only_the_three_most_recent(collection):
+    # Taste drifts. Cuisines are a rolling window of what the guest has actually
+    # been eating lately, not a permanent list that grows forever.
+    for cuisine in ["thai", "italian", "japanese", "mexican"]:
+        update_profile(collection, "Manish", {"cuisines": [cuisine]})
+
+    p = load_profile(collection, "manish")
+    assert p["cuisines"] == ["italian", "japanese", "mexican"]
+    assert "thai" not in p["cuisines"], "the oldest preference should have aged out"
+
+
+def test_revisiting_a_cuisine_keeps_it_alive(collection):
+    update_profile(collection, "Manish", {"cuisines": ["thai"]})
+    update_profile(collection, "Manish", {"cuisines": ["italian"]})
+    update_profile(collection, "Manish", {"cuisines": ["japanese"]})
+    update_profile(collection, "Manish", {"cuisines": ["thai"]})      # back to thai
+    update_profile(collection, "Manish", {"cuisines": ["mexican"]})
+
+    p = load_profile(collection, "manish")
+    # Italian was pushed out, but thai survived because it was ordered again.
+    assert p["cuisines"] == ["japanese", "thai", "mexican"]
+
+
+def test_dietary_needs_are_never_aged_out(collection):
+    # The distinction that matters: a preference can expire, an allergy cannot.
+    for need in ["gluten-free", "nut allergy", "shellfish allergy", "no dairy"]:
+        update_profile(collection, "Manish", {"dietary": [need]})
+
+    p = load_profile(collection, "manish")
+    assert p["dietary"] == ["gluten-free", "nut allergy", "shellfish allergy", "no dairy"]
 
 
 def test_update_ignores_none_and_preserves_existing(collection):
@@ -218,7 +257,7 @@ def test_book_is_idempotent_per_request(monkeypatch):
 
     session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com", "party_size": 4})
     _listed(session)
-    args = {"place_id": "p1", "date": "2026-08-07", "time": "19:00", "party_size": 4}
+    args = {"place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 4}
 
     first = _json.loads(cc._handle_book(session, args))
     second = _json.loads(cc._handle_book(session, args))
@@ -272,10 +311,67 @@ def test_book_requires_a_party_size(monkeypatch):
     # Email on file (passes the email gate) but no party size anywhere.
     session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
     _listed(session)
-    out = _json.loads(cc._handle_book(session, {"place_id": "p1", "date": "2026-08-07", "time": "19:00"}))
+    out = _json.loads(cc._handle_book(session, {"place_id": "p1", "date": FUTURE_DATE, "time": "19:00"}))
 
     assert out["status"] == "need_party_size"
     assert called["n"] == 0  # booking backend never hit without a party size
+
+
+def test_every_tool_result_restates_what_we_already_know():
+    # Guests notice being asked twice. Rather than trusting the model to remember
+    # across a long chat, each tool result carries the known facts back to it.
+    import json as _json
+
+    import agent.concierge_chat as cc
+
+    session = cc.ConciergeSession(
+        member_id="g@x.com", profile={"email": "g@x.com", "name": "Sam"}
+    )
+    session.pending["party_size"] = 4
+    _listed(session)
+
+    out = _json.loads(cc._dispatch(session, "check_availability_times", {"place_id": "p1"}))
+
+    assert out["known_so_far"]["email_on_file"] == "g@x.com"
+    assert out["known_so_far"]["guest_name"] == "Sam"
+    assert out["known_so_far"]["party_size"] == 4
+    assert "Do NOT ask for it again" in out["do_not_ask"]
+
+
+def test_no_email_reminder_when_there_is_no_email():
+    # The reminder must not appear when the email genuinely still needs asking for.
+    import json as _json
+
+    import agent.concierge_chat as cc
+
+    session = cc.ConciergeSession(member_id="sam", profile={"name": "Sam"})
+    _listed(session)
+    out = _json.loads(cc._dispatch(session, "check_availability_times", {"place_id": "p1"}))
+
+    assert "do_not_ask" not in out
+    assert "email_on_file" not in out.get("known_so_far", {})
+
+
+def test_booking_records_the_cuisine_as_a_recent_preference(monkeypatch):
+    # An actual booking is stronger evidence of taste than anything said in passing.
+    import json as _json
+
+    import agent.concierge_chat as cc
+
+    remembered: dict = {}
+    monkeypatch.setattr(cc, "create_booking",
+                        lambda **k: {"booked": True, "confirmation_id": "TF4-0001", "booking": {}})
+    monkeypatch.setattr(cc.profile_memory, "remember",
+                        lambda _id, updates: remembered.update(updates) or {"email": "g@x.com"})
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    session.recommendations = {"p1": {"place_id": "p1", "name": "Osteria", "cuisine": "italian"}}
+    out = _json.loads(cc._handle_book(session, {
+        "place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 4,
+    }))
+
+    assert out["status"] == "booked"
+    assert remembered["cuisines"] == ["italian"]
 
 
 def test_parse_time_tokens_reads_clock_times():
