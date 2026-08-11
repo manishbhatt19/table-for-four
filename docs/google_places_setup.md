@@ -48,7 +48,7 @@ GOOGLE_PLACES_API_KEY=AIza...your-key...
 ## 6. Verify
 
 ```bash
-uv run python -c "from mcp_servers.search_server import search_restaurants; import json; print(json.dumps(search_restaurants('Italian near Midtown Manhattan', open_now=True), indent=2))"
+uv run python -c "from table_for_four.mcp_servers.search.server import search_restaurants; import json; print(json.dumps(search_restaurants('Italian near Midtown Manhattan', open_now=True), indent=2))"
 ```
 
 `"source": "live"` in the output confirms real API calls (offline mode reports

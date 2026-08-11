@@ -7,7 +7,7 @@ verbatim in the retrieved snippets.
 
 from urllib.parse import unquote
 
-from agent.menu_card import (
+from table_for_four.agent.menu_card import (
     build_menu_card,
     card_for_restaurant,
     extract_dishes,

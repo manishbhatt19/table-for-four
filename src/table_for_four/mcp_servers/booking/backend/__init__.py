@@ -5,6 +5,6 @@ A self-built FastAPI service standing in for a partner-gated reservation system
 booking path is fully testable offline.
 """
 
-from mock_booking_api.app import app, reset_store
+from table_for_four.mcp_servers.booking.backend.app import app, reset_store
 
 __all__ = ["app", "reset_store"]

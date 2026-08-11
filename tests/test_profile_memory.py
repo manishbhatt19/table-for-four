@@ -10,7 +10,7 @@ from datetime import date, timedelta
 import chromadb
 import pytest
 
-from agent.profile_memory import (
+from table_for_four.agent.profile_memory import (
     build_collection,
     load_profile,
     looks_like_email,
@@ -187,8 +187,8 @@ def test_email_must_come_from_a_guest_message(monkeypatch):
 
     import chromadb
 
-    import agent.concierge_chat as cc
-    from agent import profile_memory as pm
+    import table_for_four.agent.concierge_chat as cc
+    from table_for_four.agent import profile_memory as pm
     from langchain_core.messages import HumanMessage
 
     monkeypatch.setattr(pm, "_collection", pm.build_collection(chromadb.EphemeralClient()))
@@ -212,8 +212,8 @@ def test_returning_member_recognized_when_email_given(monkeypatch):
 
     import chromadb
 
-    import agent.concierge_chat as cc
-    from agent import profile_memory as pm
+    import table_for_four.agent.concierge_chat as cc
+    from table_for_four.agent import profile_memory as pm
     from langchain_core.messages import HumanMessage
 
     monkeypatch.setattr(pm, "_collection", pm.build_collection(chromadb.EphemeralClient()))
@@ -244,7 +244,7 @@ def test_book_is_idempotent_per_request(monkeypatch):
     # An identical booking must not create a second reservation.
     import json as _json
 
-    import agent.concierge_chat as cc
+    import table_for_four.agent.concierge_chat as cc
 
     calls = {"n": 0}
 
@@ -273,7 +273,7 @@ def test_book_is_gated_on_email(monkeypatch):
     # hit the booking backend when it refuses.
     import json as _json
 
-    import agent.concierge_chat as cc
+    import table_for_four.agent.concierge_chat as cc
 
     called = {"n": 0}
     monkeypatch.setattr(cc, "create_booking", lambda **k: called.__setitem__("n", called["n"] + 1) or {})
@@ -290,7 +290,7 @@ def test_book_rejects_a_restaurant_not_in_recommendations():
     # The model cannot book a place that was never surfaced to the guest.
     import json as _json
 
-    import agent.concierge_chat as cc
+    import table_for_four.agent.concierge_chat as cc
 
     session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
     _listed(session)  # only p1 is listed
@@ -303,7 +303,7 @@ def test_book_requires_a_party_size(monkeypatch):
     # and must NOT hit the booking backend when it refuses.
     import json as _json
 
-    import agent.concierge_chat as cc
+    import table_for_four.agent.concierge_chat as cc
 
     called = {"n": 0}
     monkeypatch.setattr(cc, "create_booking", lambda **k: called.__setitem__("n", called["n"] + 1) or {})
@@ -322,7 +322,7 @@ def test_every_tool_result_restates_what_we_already_know():
     # across a long chat, each tool result carries the known facts back to it.
     import json as _json
 
-    import agent.concierge_chat as cc
+    import table_for_four.agent.concierge_chat as cc
 
     session = cc.ConciergeSession(
         member_id="g@x.com", profile={"email": "g@x.com", "name": "Sam"}
@@ -342,7 +342,7 @@ def test_no_email_reminder_when_there_is_no_email():
     # The reminder must not appear when the email genuinely still needs asking for.
     import json as _json
 
-    import agent.concierge_chat as cc
+    import table_for_four.agent.concierge_chat as cc
 
     session = cc.ConciergeSession(member_id="sam", profile={"name": "Sam"})
     _listed(session)
@@ -356,7 +356,7 @@ def test_booking_records_the_cuisine_as_a_recent_preference(monkeypatch):
     # An actual booking is stronger evidence of taste than anything said in passing.
     import json as _json
 
-    import agent.concierge_chat as cc
+    import table_for_four.agent.concierge_chat as cc
 
     remembered: dict = {}
     monkeypatch.setattr(cc, "create_booking",
@@ -375,7 +375,7 @@ def test_booking_records_the_cuisine_as_a_recent_preference(monkeypatch):
 
 
 def test_parse_time_tokens_reads_clock_times():
-    from agent.concierge_chat import _parse_time_tokens
+    from table_for_four.agent.concierge_chat import _parse_time_tokens
 
     assert "19:00" in _parse_time_tokens("7pm works")
     assert "19:30" in _parse_time_tokens("how about 7:30 pm")
@@ -392,7 +392,7 @@ def test_book_enforces_the_time_the_guest_requested(monkeypatch):
     # time, not a different open slot.
     import json as _json
 
-    import agent.concierge_chat as cc
+    import table_for_four.agent.concierge_chat as cc
     from langchain_core.messages import HumanMessage
 
     called = {"n": 0}
@@ -415,7 +415,7 @@ def test_book_enforces_the_time_the_guest_requested(monkeypatch):
 def test_book_accepts_the_requested_time(monkeypatch):
     import json as _json
 
-    import agent.concierge_chat as cc
+    import table_for_four.agent.concierge_chat as cc
     from langchain_core.messages import HumanMessage
 
     monkeypatch.setattr(cc, "create_booking",
@@ -451,7 +451,7 @@ def test_set_booking_status_updates_in_place(collection):
 
 
 def _open_far_future_slot(place: str, party_size: int = 2) -> tuple[str, str]:
-    from mock_booking_api.app import available_slots
+    from table_for_four.mcp_servers.booking.backend.app import available_slots
     for day in range(1, 29):
         date = f"2099-12-{day:02d}"
         slots = available_slots(place, date, party_size)
@@ -467,8 +467,8 @@ def test_cancel_reservation_marks_history_cancelled(monkeypatch):
 
     import chromadb
 
-    import agent.concierge_chat as cc
-    from agent import profile_memory as pm
+    import table_for_four.agent.concierge_chat as cc
+    from table_for_four.agent import profile_memory as pm
 
     monkeypatch.setattr(pm, "_collection", pm.build_collection(chromadb.EphemeralClient()))
 
@@ -500,7 +500,7 @@ def test_cancel_too_late_is_relayed_not_claimed(monkeypatch):
     # contact and the "don't claim cancellation" instruction — never a success.
     import json as _json
 
-    import agent.concierge_chat as cc
+    import table_for_four.agent.concierge_chat as cc
 
     monkeypatch.setattr(cc, "cancel_booking", lambda *a, **k: {
         "status": "too_late", "message": "within 24h",
@@ -517,7 +517,7 @@ def test_cancel_too_late_is_relayed_not_claimed(monkeypatch):
 def test_cancel_requires_a_confirmation_id():
     import json as _json
 
-    import agent.concierge_chat as cc
+    import table_for_four.agent.concierge_chat as cc
 
     session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
     out = _json.loads(cc._handle_cancel(session, {}))
@@ -528,7 +528,7 @@ def test_recommend_filters_cuisine_and_flags_perks():
     # Uses the real (offline) search + perks fixtures.
     import json as _json
 
-    import agent.concierge_chat as cc
+    import table_for_four.agent.concierge_chat as cc
 
     session = cc.ConciergeSession(member_id="g")
     out = _json.loads(cc._handle_recommend(
@@ -546,7 +546,7 @@ def test_recommend_attaches_sample_perks_on_live_data(monkeypatch):
     # recommendations should get a clearly-labeled SAMPLE offer instead.
     import json as _json
 
-    import agent.concierge_chat as cc
+    import table_for_four.agent.concierge_chat as cc
 
     monkeypatch.setattr(cc, "search_restaurants", lambda **_k: {"source": "live", "results": [
         {"place_id": "ChIJ_a", "name": "Real Italian A", "primary_type": "italian_restaurant", "rating": 4.8},
@@ -577,7 +577,7 @@ def test_recommend_attaches_sample_perks_on_live_data(monkeypatch):
 def test_check_times_requires_a_listed_restaurant():
     import json as _json
 
-    import agent.concierge_chat as cc
+    import table_for_four.agent.concierge_chat as cc
 
     session = cc.ConciergeSession(member_id="g")
     out = _json.loads(cc._handle_times(session, {"place_id": "ghost", "date": "Friday"}))

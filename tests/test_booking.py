@@ -10,8 +10,8 @@ from datetime import datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
-from mcp_servers import booking_server
-from mock_booking_api.app import (
+from table_for_four.mcp_servers.booking import server as booking_server
+from table_for_four.mcp_servers.booking.backend.app import (
     LUNCH_SLOTS,
     SERVICE_SLOTS,
     app,

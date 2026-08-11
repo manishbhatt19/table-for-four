@@ -45,9 +45,9 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from agent import menu_card, profile_memory, reasoning
-from agent.config import get_chat_llm
-from agent.tools import (
+from table_for_four.agent import menu_card, profile_memory, reasoning
+from table_for_four.agent.config import get_chat_llm
+from table_for_four.agent.tools import (
     cancel_booking,
     check_availability,
     create_booking,

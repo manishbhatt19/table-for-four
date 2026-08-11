@@ -1,7 +1,7 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "concierge": "./agent/graph.py:studio_graph"
+    "concierge": "./src/table_for_four/agent/graph.py:studio_graph"
   },
   "env": ".env"
 }

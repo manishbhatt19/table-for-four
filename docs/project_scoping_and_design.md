@@ -307,7 +307,7 @@ what makes the chat feel like a concierge rather than a booking form.
 The intent — a richer visual surface that respects representational integrity (§10) —
 shipped, but not as a photo library. Two layers, both avoiding the original plan's
 weakness (a folder of stock images that must never be mistaken for a real venue):
-- **Generated menu cards** ([`agent/menu_card.py`](../agent/menu_card.py)): one
+- **Generated menu cards** ([`src/table_for_four/agent/menu_card.py`](../src/table_for_four/agent/menu_card.py)): one
   cuisine-themed SVG card per restaurant, carrying the retrieved dish highlights and
   the perk. **Six themes**, rendered as data URIs — no image files, no storage
   question, works offline. Nothing depicts a specific venue, so nothing can

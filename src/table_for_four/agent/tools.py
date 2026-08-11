@@ -9,15 +9,15 @@ node code.
 
 from __future__ import annotations
 
-from mcp_servers.booking_server import (
+from table_for_four.mcp_servers.booking.server import (
     cancel_booking,
     check_availability,
     create_booking,
     get_booking,
 )
-from mcp_servers.perks_server import find_perks
-from mcp_servers.search_server import search_restaurants
-from mcp_servers.web_server import lookup_dining_highlights
+from table_for_four.mcp_servers.perks.server import find_perks
+from table_for_four.mcp_servers.search.server import search_restaurants
+from table_for_four.mcp_servers.web.server import lookup_dining_highlights
 
 # The capability registry the orchestrator reasons about.
 TOOLS = {

@@ -48,7 +48,7 @@ def _get_client() -> Any:
             _backend = "mock"
             from fastapi.testclient import TestClient
 
-            from mock_booking_api.app import app
+            from table_for_four.mcp_servers.booking.backend.app import app
 
             _client = TestClient(app)
     return _client

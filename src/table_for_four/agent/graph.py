@@ -24,10 +24,10 @@ from typing import Any, Literal
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
-from agent import reasoning
-from agent.config import get_llm
-from agent.state import ConciergeState
-from agent.tools import check_availability, create_booking, find_perks, search_restaurants
+from table_for_four.agent import reasoning
+from table_for_four.agent.config import get_llm
+from table_for_four.agent.state import ConciergeState
+from table_for_four.agent.tools import check_availability, create_booking, find_perks, search_restaurants
 
 MAX_ITERATIONS = 2  # refine-retry guard so the loop can never spin
 

@@ -28,7 +28,7 @@ try:
 except (AttributeError, ValueError):
     pass
 
-from mcp_servers.perks_server import DEFAULT_SEMANTIC_WEIGHT, build_collection, query_perks
+from table_for_four.mcp_servers.perks.server import DEFAULT_SEMANTIC_WEIGHT, build_collection, query_perks
 
 
 def _truncate(text: str, width: int) -> str:

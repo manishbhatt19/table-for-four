@@ -57,7 +57,7 @@ be searched by meaning and then handed to the agent as grounded options.
 
 ## 3. How we do it — the perks RAG pipeline
 
-Implemented in [`mcp_servers/perks_server.py`](../mcp_servers/perks_server.py),
+Implemented in [`src/table_for_four/mcp_servers/perks/server.py`](../src/table_for_four/mcp_servers/perks/server.py),
 exposed as the MCP tool **`find_perks`**.
 
 **a) Knowledge store — Chroma vector DB.**
@@ -128,7 +128,7 @@ facts stay as exact filters. This is the core design decision of the layer.
 
 ## 5. How RAG fits the agent journey
 
-In the concierge journey ([`agent/concierge_chat.py`](../agent/concierge_chat.py),
+In the concierge journey ([`src/table_for_four/agent/concierge_chat.py`](../src/table_for_four/agent/concierge_chat.py),
 `recommend_restaurants`), RAG runs at the recommendation step:
 
 1. Search returns candidate restaurants (Google Places or fixture).
@@ -149,7 +149,7 @@ we only want the most relevant offer regardless of source.
 
 ## 6. A second retrieval surface — long-term member memory
 
-[`agent/profile_memory.py`](../agent/profile_memory.py) also uses Chroma. Each
+[`src/table_for_four/agent/profile_memory.py`](../src/table_for_four/agent/profile_memory.py) also uses Chroma. Each
 returning member has one profile document (keyed by email); we store the full
 profile as JSON metadata and embed a **human-readable summary** of it. This gives
 the store **two retrieval modes on one index**:
@@ -170,7 +170,7 @@ stack as the perks RAG — the same technique applied to memory instead of offer
 Retrieval quality is not asserted, it's **measured** — a key part of treating RAG
 as an engineering artifact rather than a black box.
 
-**Evaluation** ([`mcp_servers/perks_eval.py`](../mcp_servers/perks_eval.py)). A
+**Evaluation** ([`src/table_for_four/mcp_servers/perks/eval.py`](../src/table_for_four/mcp_servers/perks/eval.py)). A
 small labeled benchmark pairs **10 dining intents** with the restaurant(s) a good
 retriever should surface, and scores the retriever with standard IR metrics:
 
@@ -186,15 +186,15 @@ metadata alone — empirical justification for the semantic-dominant default. Gu
 tests ([`tests/test_perks_eval.py`](../tests/test_perks_eval.py)) lock these
 numbers so a regression in the embeddings, seed, or blend fails CI.
 
-**Inspection** ([`mcp_servers/perks_inspect.py`](../mcp_servers/perks_inspect.py)).
+**Inspection** ([`src/table_for_four/mcp_servers/perks/inspect.py`](../src/table_for_four/mcp_servers/perks/inspect.py)).
 A CLI that prints, for any query, the top-k perks with the three numbers behind
 each row — `sim` (semantic), `fit` (metadata), and the blended `score` — plus the
 filters applied. It makes the "why did this rank here?" question answerable at a
 glance, and shows the `--weight` knob re-ranking results live:
 
 ```
-uv run python -m mcp_servers.perks_inspect "romantic dinner with wine" --party 2
-uv run python -m mcp_servers.perks_eval --sweep
+uv run python -m table_for_four.mcp_servers.perks.inspect "romantic dinner with wine" --party 2
+uv run python -m table_for_four.mcp_servers.perks.eval --sweep
 ```
 
 ---

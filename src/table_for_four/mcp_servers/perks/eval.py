@@ -27,7 +27,7 @@ from typing import Any
 
 import chromadb
 
-from mcp_servers.perks_server import DEFAULT_SEMANTIC_WEIGHT, build_collection, query_perks
+from table_for_four.mcp_servers.perks.server import DEFAULT_SEMANTIC_WEIGHT, build_collection, query_perks
 
 # Fixed eval date: between the "expired" (2020) and "valid" (2099) seed anchors,
 # so the expiry filter behaves identically every run.

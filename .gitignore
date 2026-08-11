@@ -16,14 +16,14 @@ wheels/
 .pytest_cache/
 
 # Perks vector store (regenerable from fixtures/perks_seed.json)
-mcp_servers/.chroma_perks/
+src/table_for_four/mcp_servers/perks/.chroma_perks/
 
 # Member profile store (per-user long-term memory; may contain personal data)
-agent/.chroma_profiles/
+src/table_for_four/agent/.chroma_profiles/
 
 # LangGraph dev server / Studio artifacts
 .langgraph_api/
 .langgraph/
 
 # SQLite bookings ledger (runtime state)
-mock_booking_api/bookings.db
+src/table_for_four/mcp_servers/booking/backend/bookings.db

@@ -7,8 +7,8 @@ what runs when no `TAVILY_API_KEY` is set, which is how the demo is graded.
 
 import pytest
 
-from mcp_servers import web_server
-from mcp_servers.web_server import lookup_dining_highlights
+from table_for_four.mcp_servers.web import server as web_server
+from table_for_four.mcp_servers.web.server import lookup_dining_highlights
 
 
 @pytest.fixture(autouse=True)

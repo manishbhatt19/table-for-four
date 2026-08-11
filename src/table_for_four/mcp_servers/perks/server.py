@@ -35,7 +35,7 @@ from chromadb.api.models.Collection import Collection
 from chromadb.utils import embedding_functions
 from mcp.server.fastmcp import FastMCP
 
-from mcp_servers.perks_data import generate_perks
+from table_for_four.mcp_servers.perks.data import generate_perks
 
 # --- Configuration -----------------------------------------------------------
 

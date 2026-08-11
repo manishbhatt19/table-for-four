@@ -5,9 +5,9 @@ API key, no network, no cost. This exercises the full loop: parse → search →
 perks → rank → propose → gate → book → audit, plus the refine-retry loop.
 """
 
-from agent.graph import run_concierge
-from agent.reasoning import parse
-from mock_booking_api.app import reset_store
+from table_for_four.agent.graph import run_concierge
+from table_for_four.agent.reasoning import parse
+from table_for_four.mcp_servers.booking.backend.app import reset_store
 
 
 def _run(request, **kw):

@@ -10,7 +10,7 @@ A fixed `today` is injected so the expiry filter is deterministic.
 import chromadb
 import pytest
 
-from mcp_servers.perks_server import build_collection, query_perks
+from table_for_four.mcp_servers.perks.server import build_collection, query_perks
 
 # Any date after the "expired" anchor (2020) and before the "valid" anchor (2099).
 TODAY = "2026-07-22"

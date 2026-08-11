@@ -16,7 +16,7 @@ import os
 
 os.environ.setdefault("BOOKING_DB_PATH", ":memory:")
 
-import mcp_servers.search_server as search_server
+import table_for_four.mcp_servers.search.server as search_server
 import pytest
 
 

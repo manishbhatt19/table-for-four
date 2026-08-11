@@ -19,13 +19,13 @@ from __future__ import annotations
 import argparse
 import sys
 
-from agent.graph import run_concierge
+from table_for_four.agent.graph import run_concierge
 
 DEFAULT_REQUEST = "Italian, near Midtown, 4 people, Friday 7pm, one guest is gluten-free"
 
 
 def _chat(argv: list[str]) -> None:
-    from agent.concierge_chat import run_chat
+    from table_for_four.agent.concierge_chat import run_chat
 
     ap = argparse.ArgumentParser(prog="agent chat", description="Interpersonal concierge chat")
     ap.add_argument("--name", default=None, help="guest name/handle (else prompted)")

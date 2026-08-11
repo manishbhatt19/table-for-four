@@ -26,15 +26,15 @@ real `bookings.db` or hit any paid API.
 
 ```bash
 # Retrieval quality on 10 labelled intents (expect hit@3 = 1.0, MRR = 1.0)
-uv run python -m mcp_servers.perks_eval
+uv run python -m table_for_four.mcp_servers.perks.eval
 
 # How the semantic-vs-metadata weight trades off precision
-uv run python -m mcp_servers.perks_eval --sweep
+uv run python -m table_for_four.mcp_servers.perks.eval --sweep
 
 # Inspect ONE query: see the ranked perks + why (sim / fit / score) + filters
-uv run python -m mcp_servers.perks_inspect "romantic dinner with wine" --party 2
-uv run python -m mcp_servers.perks_inspect "tacos with friends" --day Tue --weight 0.3
-uv run python -m mcp_servers.perks_inspect "gluten-free birthday" --blurb
+uv run python -m table_for_four.mcp_servers.perks.inspect "romantic dinner with wine" --party 2
+uv run python -m table_for_four.mcp_servers.perks.inspect "tacos with friends" --day Tue --weight 0.3
+uv run python -m table_for_four.mcp_servers.perks.inspect "gluten-free birthday" --blurb
 ```
 
 **What to look for:** the right restaurant tops the list for each intent; lowering
@@ -55,7 +55,7 @@ Expect **Giulia** ranked first. (This writes to the real profile store; harmless
 Start the backend (serves interactive Swagger docs — the easiest way to poke it):
 
 ```bash
-uv run uvicorn mock_booking_api.app:app --port 8000
+uv run uvicorn table_for_four.mcp_servers.booking.backend.app:app --port 8000
 ```
 
 Open **http://localhost:8000/docs** and use "Try it out", or use PowerShell below.
@@ -109,7 +109,7 @@ Invoke-RestMethod "http://localhost:8000/bookings?status=cancelled"             
 ```
 
 Stop the server (Ctrl+C) and restart it — the bookings are still there (they live
-in `mock_booking_api/bookings.db`).
+in `src/table_for_four/mcp_servers/booking/backend/bookings.db`).
 
 ---
 
@@ -118,8 +118,8 @@ in `mock_booking_api/bookings.db`).
 Requires `OPENAI_API_KEY` (or OpenRouter) in `.env`.
 
 ```bash
-uv run python -m agent chat            # terminal
-uv run streamlit run agent/chat_app.py # web UI with live memory panel
+uv run python -m table_for_four chat            # terminal
+uv run streamlit run src/table_for_four/ui/chat_app.py # web UI with live memory panel
 ```
 
 **A booking + cancellation script to try:**

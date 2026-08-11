@@ -1,7 +1,7 @@
 """Dino — a Streamlit chat UI for the interpersonal Table for Four concierge.
 
 A thin web wrapper around the existing, UI-agnostic session API in
-`agent.concierge_chat`:
+`table_for_four.agent.concierge_chat`:
 
     start_session(member_id) -> ConciergeSession   # loads any saved profile
     _run_turn(session, llm)  -> reply text          # one model turn + tool calls
@@ -12,33 +12,24 @@ The conversation, memory, tool-calling, and guardrails all live in
 story made visible.
 
 Run it:
-    uv run streamlit run agent/chat_app.py
+    uv run streamlit run src/table_for_four/ui/chat_app.py
 """
 
 from __future__ import annotations
 
 import html
-import sys
-from pathlib import Path
 from typing import Any
-
-# Streamlit runs this file directly, so it puts `agent/` (the script's own dir) on
-# sys.path rather than the project root — which makes `import agent...` fail. Put
-# the project root (this file's parent's parent) first so the package resolves.
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
 
 import streamlit as st
 
-from agent.calendar_invite import build_ics, ics_filename
-from agent.concierge_chat import (
+from table_for_four.agent.calendar_invite import build_ics, ics_filename
+from table_for_four.agent.concierge_chat import (
     TOOL_SCHEMAS,
     ConciergeSession,
     _run_turn,
     start_session,
 )
-from agent.config import get_chat_llm
+from table_for_four.agent.config import get_chat_llm
 
 from langchain_core.messages import HumanMessage
 

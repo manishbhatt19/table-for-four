@@ -60,10 +60,10 @@ normalization code path runs in both modes.
 
 ```bash
 # inspect the server interactively with the MCP dev inspector
-uv run mcp dev mcp_servers/search_server.py
+uv run mcp dev src/table_for_four/mcp_servers/search/server.py
 
 # or run it as a stdio MCP server (what the orchestrator will spawn)
-uv run mcp_servers/search_server.py
+uv run src/table_for_four/mcp_servers/search/server.py
 ```
 
 To enable live data, see [docs/google_places_setup.md](docs/google_places_setup.md).
@@ -74,9 +74,9 @@ The orchestrator chains search → perks → booking through a LangGraph state m
 with a refine-retry loop and per-thread working memory. Run it end-to-end:
 
 ```bash
-uv run python -m agent                                  # default sample request
-uv run python -m agent "Italian for 4, Friday 7pm"      # custom request
-uv run python -m agent --heuristic "sushi for 2"        # force offline mode
+uv run python -m table_for_four                                  # default sample request
+uv run python -m table_for_four "Italian for 4, Friday 7pm"      # custom request
+uv run python -m table_for_four --heuristic "sushi for 2"        # force offline mode
 ```
 
 It prints the full reasoning trace and the booking confirmation. With an
@@ -86,26 +86,26 @@ the whole loop works offline.
 
 ## Interpersonal concierge — Dino
 
-`agent/concierge_chat.py` is the warm, conversational front-end: Dino guides a guest
+`src/table_for_four/agent/concierge_chat.py` is the warm, conversational front-end: Dino guides a guest
 through a full booking *journey* (understand intent → gather details → recommend →
 pick → check times → book → tips), keeping the guest in the loop at each choice and
 remembering them across sessions in Chroma. It needs an `OPENAI_API_KEY` (or
 OpenRouter) in `.env`.
 
 ```bash
-uv run python -m agent chat                 # terminal REPL
-uv run python -m agent chat --name "Manish" # skip the name prompt
-uv run streamlit run agent/chat_app.py      # web chat UI (live memory panel)
+uv run python -m table_for_four chat                 # terminal REPL
+uv run python -m table_for_four chat --name "Manish" # skip the name prompt
+uv run streamlit run src/table_for_four/ui/chat_app.py      # web chat UI (live memory panel)
 ```
 
-The Streamlit UI (`agent/chat_app.py`) is a thin wrapper over the same session API
+The Streamlit UI (`src/table_for_four/ui/chat_app.py`) is a thin wrapper over the same session API
 (`start_session` + `_run_turn`) — the sidebar shows the guest's long-term profile
 filling in live from Chroma as they talk.
 
 ## Bookings ledger & cancellation policy
 
 Reservations persist to a **SQLite ledger** in the mock backend
-([mock_booking_api/app.py](mock_booking_api/app.py)) — a real relational
+([src/table_for_four/mcp_servers/booking/backend/app.py](src/table_for_four/mcp_servers/booking/backend/app.py)) — a real relational
 system-of-record (restaurant name/address/phone, date/time, party, guest email,
 `status`, and cancellation timestamps), still zero-setup and offline (path via
 `BOOKING_DB_PATH`; tests use an in-memory DB). Chroma stays reserved for semantic
@@ -127,13 +127,13 @@ structured metadata + time filters, re-ranked by a tunable `semantic_weight`. It
 both **evaluated** and **inspectable** — see [docs/week3_rag.md](docs/week3_rag.md).
 
 ```bash
-uv run python -m mcp_servers.perks_eval                       # hit@k / precision / MRR
-uv run python -m mcp_servers.perks_eval --sweep               # weight vs. precision trade-off
-uv run python -m mcp_servers.perks_inspect "tacos with friends" --day Tue
-uv run python -m mcp_servers.perks_inspect "romantic dinner with wine" --party 2 --blurb
+uv run python -m table_for_four.mcp_servers.perks.eval                       # hit@k / precision / MRR
+uv run python -m table_for_four.mcp_servers.perks.eval --sweep               # weight vs. precision trade-off
+uv run python -m table_for_four.mcp_servers.perks.inspect "tacos with friends" --day Tue
+uv run python -m table_for_four.mcp_servers.perks.inspect "romantic dinner with wine" --party 2 --blurb
 ```
 
-Long-term member memory ([agent/profile_memory.py](agent/profile_memory.py)) runs
+Long-term member memory ([src/table_for_four/agent/profile_memory.py](src/table_for_four/agent/profile_memory.py)) runs
 on the same stack with two retrieval modes: key lookup and semantic recall
 (`find_members("the guest who loves Sicilian wine")`).
 
@@ -141,7 +141,7 @@ on the same stack with two retrieval modes: key lookup and semantic recall
 
 The third retrieval surface is the **open web**. When a guest asks *"what's good
 there?"* or *"can I see the place?"*, and once automatically after a booking,
-Dino calls `show_dining_highlights` ([mcp_servers/web_server.py](mcp_servers/web_server.py))
+Dino calls `show_dining_highlights` ([src/table_for_four/mcp_servers/web/server.py](src/table_for_four/mcp_servers/web/server.py))
 — a Tavily search that returns a few **cited** menu highlights plus photos.
 
 Three constraints keep it honest and on-scope:
@@ -160,31 +160,42 @@ Without a `TAVILY_API_KEY` the tool serves offline fixture highlights with local
 generated placeholder graphics, so the demo still runs end-to-end with no key.
 
 ```bash
-uv run mcp dev mcp_servers/web_server.py    # inspect the tool interactively
+uv run mcp dev src/table_for_four/mcp_servers/web/server.py    # inspect the tool interactively
 ```
 
 ## Repo layout
 
+Structured to mirror the architecture in
+[docs/project_scoping_and_design.md](docs/project_scoping_and_design.md) §5: the
+orchestrator, one package per MCP server, and each server owning the data it uses.
+
 ```
 table-for-four/
-├── mcp_servers/
-│   ├── search_server.py      # ✅ Google Places search tool (MCP)
-│   ├── perks_server.py       # ✅ perks RAG tool: Chroma hybrid + tunable weight (MCP)
-│   ├── perks_data.py         # ✅ deterministic synthetic perks generator
-│   ├── perks_eval.py         # ✅ labeled retrieval eval (hit@k / precision / MRR)
-│   ├── perks_inspect.py      # ✅ CLI: inspect a query's ranked results + scores
-│   ├── booking_server.py     # ✅ booking + cancellation tools over the backend (MCP)
-│   ├── web_server.py         # ✅ live menu highlights + photos via Tavily (MCP)
-│   └── fixtures/             # offline fixtures: places + perks + web highlights
-├── mock_booking_api/         # ✅ FastAPI reservation backend + SQLite ledger (self-built mock)
-├── agent/                    # ✅ (M3) LangGraph orchestrator
-│   ├── graph.py              #     state machine + refine-retry loop + checkpointer
-│   ├── reasoning.py          #     heuristic + LLM parse / rank / narrate
-│   ├── tools.py              #     in-process MCP tool registry
-│   ├── config.py             #     provider-agnostic LLM loader (OpenAI/OpenRouter)
-│   └── __main__.py           #     `python -m agent` demo CLI
-├── agent/                    # (M3) LangGraph orchestrator
-├── governance/               # (M4) audit log + human-approval gate
-├── tests/
-└── docs/
+├── src/table_for_four/
+│   ├── __main__.py                 # `python -m table_for_four` demo CLI + chat
+│   ├── agent/                      # the orchestrator and the concierge
+│   │   ├── graph.py                #   LangGraph state machine + refine loop + checkpointer
+│   │   ├── state.py                #   typed graph state (working memory)
+│   │   ├── reasoning.py            #   heuristic + LLM parse / rank / narrate
+│   │   ├── tools.py                #   in-process MCP tool registry
+│   │   ├── config.py               #   provider-agnostic LLM loader (OpenAI/OpenRouter)
+│   │   ├── concierge_chat.py       #   Dino: the turn-by-turn booking journey
+│   │   ├── profile_memory.py       #   long-term member memory (Chroma)
+│   │   ├── menu_card.py            #   generated cuisine-themed menu cards (SVG)
+│   │   └── calendar_invite.py      #   .ics builder for a confirmed booking
+│   ├── mcp_servers/                # one package per tool server, data included
+│   │   ├── search/                 #   Google Places + offline places fixture
+│   │   ├── perks/                  #   perks RAG: server, seed data, eval, inspector,
+│   │   │                           #   fixtures, and the .chroma_perks index
+│   │   ├── booking/                #   booking + cancellation tools
+│   │   │   └── backend/            #     the FastAPI reservation service + SQLite ledger
+│   │   └── web/                    #   Tavily menu highlights + offline fixture
+│   └── ui/
+│       └── chat_app.py             # Streamlit chat UI (live memory panel)
+├── tests/                          # offline suite, no keys or network needed
+├── docs/                           # scoping, submissions, progress, overview
+└── governance/                     # (M4) audit log + human-approval gate
 ```
+
+Each MCP server keeps its own fixtures and persistent store beside it, so a server
+is self-contained: delete the directory and nothing else has to change.

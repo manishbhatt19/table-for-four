@@ -4,7 +4,7 @@ These call the tool's underlying function directly (no MCP client needed) and
 exercise the fixture path, so they run with no API key and no network.
 """
 
-from mcp_servers.search_server import search_restaurants
+from table_for_four.mcp_servers.search.server import search_restaurants
 
 
 def test_returns_fixture_results_offline():

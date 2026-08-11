@@ -1,6 +1,6 @@
 """Tests for the downloadable calendar hold (.ics) generator."""
 
-from agent.calendar_invite import build_ics, ics_filename
+from table_for_four.agent.calendar_invite import build_ics, ics_filename
 
 BOOKING = {
     "restaurant": "Osteria Midtown",

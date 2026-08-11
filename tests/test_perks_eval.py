@@ -8,8 +8,8 @@ silently degrading recommendations.
 import chromadb
 import pytest
 
-from mcp_servers.perks_eval import EVAL_CASES, run_eval
-from mcp_servers.perks_server import build_collection
+from table_for_four.mcp_servers.perks.eval import EVAL_CASES, run_eval
+from table_for_four.mcp_servers.perks.server import build_collection
 
 
 @pytest.fixture(scope="module")
