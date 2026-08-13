@@ -45,6 +45,12 @@ _LIST_FIELDS = ("dietary", "cuisines", "interests", "past_bookings")
 # (an allergy is not a passing preference) and `past_bookings` (that's history).
 _RECENCY_CAPPED = {"cuisines": 3}
 
+# Standing preferences: once a value is on file it describes the guest, not the
+# outing. A trip to Brooklyn for a friend's birthday must not silently rewrite
+# where the guest lives, and a table for six once must not become their usual.
+# `sticky_conflicts` flags such a write so the caller can ASK before it lands.
+STICKY_SCALARS = ("home_location", "party_size")
+
 _EMBED = embedding_functions.DefaultEmbeddingFunction()  # all-MiniLM-L6-v2, local
 
 _collection: Collection | None = None  # lazy persistent singleton
@@ -185,13 +191,17 @@ def _merge(current: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
             existing = list(merged.get(key) or [])
             if cap:
                 # Re-mentioning something makes it recent again: drop the old
-                # position, re-append, then keep the tail.
-                existing = [item for item in existing if item not in incoming]
+                # position, re-append, then keep the tail. Matching ignores case,
+                # so "Italian" and "italian" are one favourite, not two.
+                existing = [
+                    item for item in existing
+                    if not any(_same_value(item, new) for new in incoming)
+                ]
                 existing += [item for item in incoming if item is not None]
                 merged[key] = existing[-cap:]
             else:
                 for item in incoming:
-                    if item not in existing:
+                    if not any(_same_value(item, seen) for seen in existing):
                         existing.append(item)
                 merged[key] = existing
         else:
@@ -205,6 +215,54 @@ def update_profile(
     """Merge `updates` into a member's profile (creating it if new) and persist."""
     current = load_profile(collection, member_id) or {"member_id": resolve_key(member_id)}
     return save_profile(collection, member_id, _merge(current, updates))
+
+
+def _same_value(a: Any, b: Any) -> bool:
+    """Equality that ignores case/whitespace for text ("Midtown" == "midtown")."""
+    if isinstance(a, str) and isinstance(b, str):
+        return a.strip().lower() == b.strip().lower()
+    return a == b
+
+
+def sticky_conflicts(
+    profile: dict[str, Any] | None, updates: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
+    """Which parts of `updates` would rewrite a standing preference already on file.
+
+    Returns `{field: {"saved": current, "proposed": incoming}}` for every field the
+    caller should CONFIRM with the guest before writing:
+
+    * `home_location` / `party_size` — a value is already stored and differs.
+    * `cuisines` — the list is already at its recency cap, so adding a new one
+      would push the guest's oldest favourite out.
+
+    A first value is never a conflict: there's nothing to overwrite, so learning
+    it is just learning. Everything else stays free to update as it always was —
+    only these three drift in a way guests notice (see `STICKY_SCALARS`).
+    """
+    current = profile or {}
+    out: dict[str, dict[str, Any]] = {}
+
+    for field_name in STICKY_SCALARS:
+        proposed = updates.get(field_name)
+        saved = current.get(field_name)
+        if proposed in (None, "", [], {}) or saved in (None, "", [], {}):
+            continue
+        if not _same_value(proposed, saved):
+            out[field_name] = {"saved": saved, "proposed": proposed}
+
+    incoming = updates.get("cuisines")
+    if incoming:
+        cap = _RECENCY_CAPPED["cuisines"]
+        saved_list = list(current.get("cuisines") or [])
+        fresh = [
+            c for c in (incoming if isinstance(incoming, list) else [incoming])
+            if not any(_same_value(c, existing) for existing in saved_list)
+        ]
+        if fresh and len(saved_list) >= cap:
+            out["cuisines"] = {"saved": saved_list, "proposed": fresh}
+
+    return out
 
 
 def set_email(

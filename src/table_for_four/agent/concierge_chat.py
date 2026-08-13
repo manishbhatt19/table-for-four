@@ -3,7 +3,8 @@
 A warm, human-facing layer that guides a guest through a full booking *journey*
 rather than one-shot auto-booking:
 
-    welcome -> understand intent -> gather missing details (incl. email)
+    welcome -> have we met before? (email -> saved preferences)
+      -> understand intent -> gather missing details (incl. email)
       -> recommend restaurants (flagging which carry a perk)
       -> guest picks one -> show available times (mock data)
       -> book it (or refine and search again) -> share dining tips + what to order
@@ -18,7 +19,10 @@ What it demonstrates:
 * **Long-term memory (Chroma).** Name, email, cuisine/location preferences,
   party size, dietary needs, kids/high-chair info, interests, and past bookings
   are saved to `agent.profile_memory`, keyed by email, so a returning guest is
-  recognized and their usuals can be reused.
+  recognized and their usuals can be reused. Three of those — home area, usual
+  party size, favourite cuisines — are *standing* preferences: once on file they
+  only change when the guest says so, offered once after a booking rather than
+  quietly rewritten by wherever they happened to eat this week.
 * **Tool use.** The model reaches the world only through the tools below.
 * **Live web retrieval (Tavily).** `show_dining_highlights` fetches cited menu
   highlights and photos for a restaurant the guest is actually considering —
@@ -95,6 +99,17 @@ back to the table. Never answer the off-topic question, even partially.
    moment they give a known **email** (see `set_confirmation_email`) — the instant
    that happens, pivot to a warm welcome-back even if you already greeted them.
    Welcoming them back is *not* permission to start booking their usual: go to 2b.
+1b. **"Have we met before?" — ask this BEFORE you search.** Unless the context
+   already says this is a returning guest, ask early, in ONE friendly line,
+   whether they've booked with Dino before — e.g. "Have you dined with us before?
+   If you have, pop in the email you used and I'll pull up your usuals."
+     - **Yes** → ask for that email, call `set_confirmation_email`, and use what
+       comes back (cuisines, area, usual party size, dietary) as the starting
+       point for this outing — then still offer them the choice in 2b.
+     - **New, or they'd rather not** → carry straight on. You'll still need an
+       email before booking (step 6); don't make a second thing of it.
+   `recommend_restaurants` enforces this: the first call comes back
+   `ask_if_returning` until you've asked. Ask, hear the answer, then search.
 2. **Understand their intent** — what kind of outing is this?
 2b. **Ask how they'd like to choose — never assume.** Remembering a guest's usuals
    is for *offering*, not for deciding. Before you search, put the choice to them
@@ -143,6 +158,14 @@ back to the table. Never answer the off-topic question, even partially.
    order" line drawn from the highlights**. Any specific claim about the food must
    come from that tool result — never invent a dish, and say where it came from
    ("diners keep mentioning…", "their site lists…").
+7b. **Offer to update their standing preferences — once, lightly.** If the booking
+   result carries a `preference_check`, this outing differs from what's saved as
+   their usual (home area, usual party size, or favourite cuisines). Right after
+   you confirm the booking, ask in ONE short, breezy question whether they'd like
+   the saved detail changed — "want me to make Brooklyn your home area from now
+   on?" — then carry on regardless. It's an offer, not a form: if they don't
+   answer, or they answer something else, let it go and change nothing. Never ask
+   twice, and never nag.
 8. **Offer another** — ask whether they'd like to book another restaurant for a
    different day. If yes, return to step 3/4 for the new outing.
 9. **Cancellations** — if a guest wants to cancel, find the reservation's
@@ -153,9 +176,26 @@ back to the table. Never answer the off-topic question, even partially.
    restaurant's **phone and website** (from the tool result) to cancel directly.
 10. **Close** warmly when they're done.
 
+## Standing preferences — ask, never assume
+Three saved details describe *the guest*, not tonight's outing: their **home area**,
+their **usual party size**, and their **favourite cuisines** (we keep the three most
+recent). Once a value is on file it must NOT change just because this booking is
+different — a birthday dinner in Brooklyn doesn't mean they've moved, and one table
+for six isn't their new usual. The system enforces this: `remember_guest_details`
+will refuse a change to those three and hand you back what it blocked.
+
+To actually change one, the guest has to say so:
+- offer the change once (step 7b), then
+- only if they clearly agree — or ask for it themselves — call
+  `confirm_preference_updates` with just the fields they agreed to.
+Silence means no. Changing the subject means no. Your own judgement means no.
+Learning a value for the *first* time is not a change and needs no permission.
+
 ## Tools
 - `remember_guest_details` — save durable facts (pronouns, email is separate, see
   below; location, cuisines, party size, dietary, kids, interests). Save as you go.
+- `confirm_preference_updates` — apply a change to a saved home area, usual party
+  size, or favourite cuisines. ONLY after the guest explicitly agreed or asked.
 - `recall_guest_profile` — check what you already know.
 - `set_confirmation_email` — save the guest's email (the unique id for returning
   members and where the confirmation notionally goes). NEVER invent or assume an
@@ -163,7 +203,10 @@ back to the table. Never answer the off-topic question, even partially.
   `returning_member: true`, immediately welcome them back by name and mention their
   `last_booking`/saved cuisines before continuing.
 - `recommend_restaurants` — get a shortlist with perk flags. Call again with
-  adjusted criteria if the guest wants different options.
+  adjusted criteria if the guest wants different options. If it returns
+  `ask_if_returning`, no search ran: ask the step-1b question first, then call it
+  again. `cuisine` must be an actual cuisine ("Italian", "sushi") — never a
+  restaurant's name and never a category like "restaurant" or "food".
 - `check_availability_times` — get open times for a chosen restaurant + date.
 - `book_table` — book a specific restaurant at a specific available time. Requires
   the guest's email to be on file first.
@@ -207,7 +250,15 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "party_size": {"type": "integer", "description": "The guest's usual party size."},
                     "dining_atmosphere": {"type": "string", "description": "e.g. 'romantic', 'lively', 'family-friendly'."},
                     "dietary": {"type": "array", "items": {"type": "string"}},
-                    "cuisines": {"type": "array", "items": {"type": "string"}},
+                    "cuisines": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Kinds of food the guest likes — 'Italian', 'sushi', "
+                            "'steakhouse'. NEVER a restaurant's name, and never a "
+                            "category like 'restaurant', 'food' or 'fine dining'."
+                        ),
+                    },
                     "kids": {
                         "type": "array",
                         "items": {
@@ -220,6 +271,31 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     },
                     "interests": {"type": "array", "items": {"type": "string"}},
                     "notes": {"type": "string"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "confirm_preference_updates",
+            "description": (
+                "Change a STANDING preference already on file — the guest's home "
+                "area, their usual party size, or their favourite cuisines. Call "
+                "this ONLY after the guest explicitly agreed to the change or asked "
+                "for it in their own words; never on silence, a topic change, or "
+                "your own judgement. Pass only the fields they agreed to."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "home_location": {"type": "string", "description": "New home city/area."},
+                    "party_size": {"type": "integer", "description": "New usual party size."},
+                    "cuisines": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Cuisine(s) to add to their favourites.",
+                    },
                 },
             },
         },
@@ -392,6 +468,9 @@ class ConciergeSession:
     bookings: dict[str, Any] = field(default_factory=dict)          # key -> result (idempotency)
     pending: dict[str, Any] = field(default_factory=dict)           # outing being planned
     media: list[dict[str, Any]] = field(default_factory=list)       # web highlights for the UI
+    pref_offer: dict[str, Any] = field(default_factory=dict)        # standing-pref change put to the guest
+    asked_returning: bool = False                                   # "have we met before?" put to the guest
+    returning_asked_at: int = 0                                     # where in the transcript we asked it
 
     @property
     def display_name(self) -> str:
@@ -455,6 +534,175 @@ def _guest_typed(session: ConciergeSession, text: str) -> bool:
     )
 
 
+# Nudge appended by `_run_turn` when the model runs out of tool hops. It arrives as
+# a HumanMessage but is *not* the guest speaking, so consent checks must skip it.
+_NO_MORE_TOOLS = "(Please respond to me directly now, no more tools.)"
+
+# A plain yes, in the shapes guests actually type. Deliberately generous about
+# wording and deliberately strict about needing *something*: with no match we
+# leave the saved preference alone, which is the safe direction to be wrong in.
+_AFFIRMATIVE = re.compile(
+    r"\b(yes|yeah|yep|yup|sure|ok|okay|please|do it|go ahead|sounds good|that works|"
+    r"good idea|great|perfect|correct|absolutely|definitely|update|change|switch|"
+    r"set|save|make)\b",
+    re.I,
+)
+
+# An unprompted request to change something ("make Brooklyn my home area"). Merely
+# *mentioning* an area or a headcount is how the drift happened in the first place,
+# so a bare mention is never enough — the guest has to ask for the change.
+_CHANGE_REQUEST = re.compile(r"\b(update|change|switch|set|save|make|from now on)\b", re.I)
+
+
+def _guest_replies_since(session: ConciergeSession, index: int) -> list[str]:
+    """What the guest themselves typed after message `index` (system nudges excluded)."""
+    out: list[str] = []
+    for message in session.messages[index:]:
+        if not isinstance(message, HumanMessage):
+            continue
+        text = (message.content or "").strip()
+        if text and text != _NO_MORE_TOOLS and not text.startswith("(System:"):
+            out.append(text)
+    return out
+
+
+def _offer_preference_changes(
+    session: ConciergeSession, proposals: dict[str, dict[str, Any]]
+) -> None:
+    """Record that a standing-preference change is being put to the guest.
+
+    The index matters: consent has to arrive *after* the question, so a model that
+    confirms in the same breath as it asked is confirming nothing.
+    """
+    session.pref_offer = {"proposals": proposals, "asked_at": len(session.messages)}
+
+
+def _authorized_changes(
+    session: ConciergeSession, updates: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split requested preference changes into (authorized, unauthorized).
+
+    A change is authorized two ways, both grounded in the guest's own words:
+
+    * we offered it and they said yes *afterwards*, or
+    * they asked for it unprompted — an explicit "make/change/set …" naming the
+      new value themselves.
+
+    Everything else — silence, a topic change, the model's own inference — leaves
+    the saved value untouched. The guest not answering is a perfectly fine outcome.
+    """
+    offer = session.pref_offer or {}
+    offered = offer.get("proposals") or {}
+    replies = _guest_replies_since(session, int(offer.get("asked_at") or 0))
+    joined = " ".join(replies)
+    said_yes = bool(replies) and bool(_AFFIRMATIVE.search(joined))
+
+    authorized: dict[str, Any] = {}
+    unauthorized: dict[str, Any] = {}
+    for field_name, value in updates.items():
+        values = value if isinstance(value, list) else [value]
+        named_it = all(_guest_typed(session, str(v)) for v in values)
+        asked_for_it = named_it and bool(_CHANGE_REQUEST.search(joined or "")) \
+            and bool(replies)
+        if (field_name in offered and said_yes) or asked_for_it:
+            authorized[field_name] = value
+        else:
+            unauthorized[field_name] = value
+    return authorized, unauthorized
+
+
+# --- Cuisine hygiene ---------------------------------------------------------
+#
+# A guest's favourite cuisines are long-term memory, so only a real cuisine may
+# land there. Two things kept getting in: Google's `primary_type`, which is just
+# as often a generic category ("restaurant", "bar", "fine_dining_restaurant") as
+# a cuisine ("italian_restaurant"), and the model helpfully passing a venue's own
+# name. Neither describes taste, and both are visible to the guest next visit
+# ("I remember you love restaurant!"), so they're filtered out at every entry
+# point rather than at any one of them.
+
+_NOT_A_CUISINE = {
+    "restaurant", "restaurants", "food", "foods", "cuisine", "dining", "fine dining",
+    "casual dining", "bar", "wine bar", "pub", "cafe", "coffee", "coffee shop",
+    "bakery", "diner", "bistro", "brasserie", "eatery", "brunch", "breakfast",
+    "lunch", "dinner", "fast food", "takeaway", "meal takeaway", "meal delivery",
+    "buffet", "food court", "night club", "point of interest", "establishment",
+    "store", "any", "anything", "something new", "other", "none",
+}
+
+# Place types that name a cuisine without the `_restaurant` suffix our stripper
+# looks for, or whose bare stem reads oddly back to a guest.
+_TYPE_CUISINE_ALIASES = {
+    "steak_house": "steakhouse",
+    "barbecue_restaurant": "barbecue",
+    "hamburger_restaurant": "burgers",
+    "pizza_restaurant": "pizza",
+    "seafood_restaurant": "seafood",
+    "sushi_restaurant": "sushi",
+    "ramen_restaurant": "ramen",
+}
+
+# Trailing filler on a free-text cuisine: "thai food" / "italian restaurant".
+_CUISINE_FILLER = re.compile(r"\s*\b(restaurants?|food|cuisine|places?|spots?)\b\s*$")
+
+
+def _norm_text(value: Any) -> str:
+    """Lowercase, punctuation-free, single-spaced — for comparing labels."""
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+
+
+def _clean_cuisine(value: Any) -> str | None:
+    """A cuisine label, or None if the text doesn't actually name a cuisine."""
+    label = _norm_text(value)
+    if not label or label in _NOT_A_CUISINE:
+        return None
+    label = _CUISINE_FILLER.sub("", label).strip() or label
+    return None if label in _NOT_A_CUISINE else label
+
+
+def _cuisine_from_place_type(primary_type: str | None) -> str | None:
+    """Read a cuisine off a Google place type, or None if it's just a category."""
+    kind = re.sub(r"[^a-z0-9]+", "_", (primary_type or "").lower()).strip("_")
+    if not kind:
+        return None
+    if kind in _TYPE_CUISINE_ALIASES:
+        return _TYPE_CUISINE_ALIASES[kind]
+    if kind.endswith("_restaurant"):
+        return _clean_cuisine(kind[: -len("_restaurant")].replace("_", " "))
+    return None  # "restaurant", "bar", "cafe", "food" — a category, not a cuisine
+
+
+def _is_restaurant_name(session: ConciergeSession, label: str) -> bool:
+    """True if `label` is really the name of a venue in play, not a cuisine.
+
+    Exact matches only for a one-word label — plenty of restaurants are called
+    "Italian Kitchen", and a guest who loves Italian shouldn't lose the memory
+    because of where they ate.
+    """
+    target = _norm_text(label)
+    if not target:
+        return False
+    names = [r.get("name") for r in session.recommendations.values()]
+    names += [b.get("restaurant") for b in session.bookings.values()]
+    multiword = " " in target
+    for name in names:
+        known = _norm_text(name)
+        if known and (target == known or (multiword and target in known)):
+            return True
+    return False
+
+
+def _clean_cuisines(session: ConciergeSession, value: Any) -> list[str]:
+    """Filter a proposed cuisines list down to values worth remembering."""
+    incoming = value if isinstance(value, list) else [value]
+    out: list[str] = []
+    for item in incoming:
+        cuisine = _clean_cuisine(item)
+        if cuisine and not _is_restaurant_name(session, item) and cuisine not in out:
+            out.append(cuisine)
+    return out
+
+
 def _profile_context(profile: dict[str, Any] | None) -> str:
     if not profile:
         return "This is a NEW guest — no profile on file yet."
@@ -471,10 +719,78 @@ def _profile_context(profile: dict[str, Any] | None) -> str:
 
 def _handle_remember(session: ConciergeSession, args: dict[str, Any]) -> str:
     updates = {k: v for k, v in args.items() if v not in (None, "", [], {})}
+    if "cuisines" in updates:
+        cuisines = _clean_cuisines(session, updates["cuisines"])
+        if cuisines:
+            updates["cuisines"] = cuisines
+        else:
+            updates.pop("cuisines")  # "restaurant", a venue's name — not a taste
     if not updates:
         return "Nothing to save."
-    session.profile = profile_memory.remember(session.member_id, updates)
-    return "Saved: " + ", ".join(sorted(updates.keys()))
+
+    # Standing preferences (home area, usual party size, the cuisine top three) are
+    # never overwritten by a passing mention — the guest has to agree to the change.
+    blocked = profile_memory.sticky_conflicts(session.profile, updates)
+    allowed = {k: v for k, v in updates.items() if k not in blocked}
+    if allowed:
+        session.profile = profile_memory.remember(session.member_id, allowed)
+    if not blocked:
+        return "Saved: " + ", ".join(sorted(allowed))
+
+    _offer_preference_changes(session, blocked)
+    return json.dumps({
+        "status": "saved_with_confirmation_needed",
+        "saved": sorted(allowed),
+        "not_saved": blocked,
+        "message": (
+            "The fields in `not_saved` are STANDING preferences with a different "
+            "value already on file, so they were left unchanged. Ask the guest once, "
+            "lightly, whether they'd like the saved value updated. If they clearly "
+            "say yes, call confirm_preference_updates with just those fields; if they "
+            "don't answer or move on, leave it and never ask again."
+        ),
+    }, ensure_ascii=False)
+
+
+def _handle_confirm_prefs(session: ConciergeSession, args: dict[str, Any]) -> str:
+    """Apply a standing-preference change the guest actually asked for."""
+    updates = {k: v for k, v in args.items() if v not in (None, "", [], {})}
+    if "cuisines" in updates:
+        cuisines = _clean_cuisines(session, updates["cuisines"])
+        if cuisines:
+            updates["cuisines"] = cuisines
+        else:
+            updates.pop("cuisines")
+    if not updates:
+        return json.dumps({
+            "status": "nothing_to_update",
+            "message": "Pass the field(s) the guest agreed to change.",
+        }, ensure_ascii=False)
+
+    authorized, unauthorized = _authorized_changes(session, updates)
+    if authorized:
+        session.profile = profile_memory.remember(session.member_id, authorized)
+        # One offer, one answer: don't let a later "yes" to something else reuse it.
+        session.pref_offer = {}
+
+    if not unauthorized:
+        return json.dumps({
+            "status": "updated",
+            "updated": authorized,
+            "message": "Saved. Acknowledge it in half a sentence and move on.",
+        }, ensure_ascii=False)
+
+    return json.dumps({
+        "status": "not_authorized" if not authorized else "partly_updated",
+        "updated": authorized,
+        "unchanged": sorted(unauthorized),
+        "message": (
+            "The guest hasn't clearly agreed to change the field(s) in `unchanged`, "
+            "so their saved value stands. That's a fine outcome — do NOT pester them. "
+            "Only if you genuinely haven't asked yet, ask once; otherwise carry on "
+            "with the booking and drop it."
+        ),
+    }, ensure_ascii=False)
 
 
 def _handle_recall(session: ConciergeSession, _args: dict[str, Any]) -> str:
@@ -500,6 +816,7 @@ def _handle_email(session: ConciergeSession, args: dict[str, Any]) -> str:
     key, profile, returning = profile_memory.adopt_email(session.member_id, email)
     session.member_id = key
     session.profile = profile
+    session.asked_returning = True  # identity settled; don't gate the search on it
     payload: dict[str, Any] = {"status": "saved", "email": key, "returning_member": returning}
     if returning:
         past = profile.get("past_bookings") or []
@@ -527,6 +844,39 @@ def _handle_email(session: ConciergeSession, args: dict[str, Any]) -> str:
 
 
 def _handle_recommend(session: ConciergeSession, args: dict[str, Any]) -> str:
+    # Have we met before? A guest who has booked with Dino already has cuisines, an
+    # area, a party size and dietary needs on file — all of it worth searching WITH
+    # rather than discovering again. But we only find them by email, so ask for it
+    # BEFORE the first search instead of at booking time, when it's too late to
+    # shape the shortlist. Asked once per session, and never when we already have a
+    # profile: a guest saying "no, I'm new" is a fine answer that unblocks the search.
+    if not (session.profile or {}).get("email"):
+        if not session.asked_returning:
+            session.asked_returning = True
+            session.returning_asked_at = len(session.messages)
+            return json.dumps({
+                "status": "ask_if_returning",
+                "message": (
+                    "Before searching, ask the guest ONE friendly question: have they "
+                    "dined with us before? If yes, ask for the email they used and call "
+                    "set_confirmation_email — their saved cuisines, area, usual party "
+                    "size and dietary needs then shape this search (offer them as in "
+                    "step 2b). If they're new or would rather not say, just carry on and "
+                    "search — don't ask again, and don't re-ask for the email later."
+                ),
+            }, ensure_ascii=False)
+        # Asking is only worth anything if we wait for the answer: the search stays
+        # shut until the guest has actually spoken since the question.
+        if not _guest_replies_since(session, session.returning_asked_at):
+            return json.dumps({
+                "status": "awaiting_answer",
+                "message": (
+                    "You've asked whether they've dined with us before, but the guest "
+                    "hasn't answered yet. Stop calling tools and put the question to "
+                    "them; search once they've replied."
+                ),
+            }, ensure_ascii=False)
+
     cuisine = args.get("cuisine")
     keywords = args.get("keywords") or cuisine or "restaurant"
     party_size = args.get("party_size")
@@ -535,6 +885,15 @@ def _handle_recommend(session: ConciergeSession, args: dict[str, Any]) -> str:
         session.pending["party_size"] = party_size
     if args.get("date"):
         session.pending["date"] = args["date"]
+    if args.get("location"):
+        # Where *this outing* is — not where the guest lives. Kept apart from the
+        # saved home area on purpose; see the preference check after booking.
+        session.pending["location"] = args["location"]
+    # What the guest asked for is the fallback taste signal when the place's own
+    # Google type is the useless generic "restaurant".
+    requested_cuisine = _clean_cuisine(cuisine)
+    if requested_cuisine:
+        session.pending["cuisine"] = requested_cuisine
     day = None
     if args.get("date"):
         try:
@@ -588,7 +947,7 @@ def _handle_recommend(session: ConciergeSession, args: dict[str, Any]) -> str:
             "address": c.get("address"),
             "phone": c.get("phone"),
             "website": c.get("website"),
-            "cuisine": (c.get("primary_type") or "").replace("_restaurant", "") or None,
+            "cuisine": _cuisine_from_place_type(c.get("primary_type")),
             "rating": c.get("rating"),
             "price_level": c.get("price_level"),
             "has_perk": bool(perk),
@@ -777,19 +1136,43 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
     }
     session.bookings[key] = result
     session.pending.update({"time": time, "confirmation_id": booking.get("confirmation_id")})
-    # Remember the booking + reusable preferences for next time. The booked
-    # restaurant's cuisine counts as a fresh preference signal — an actual booking
-    # is better evidence of taste than anything the guest said in passing — and
-    # the store keeps only the most recent few.
-    session.profile = profile_memory.remember(session.member_id, {
-        "party_size": party_size,
-        "cuisines": [rec["cuisine"]] if rec.get("cuisine") else None,
-        "past_bookings": [{
-            "restaurant": rec["name"], "confirmation_id": booking.get("confirmation_id"),
-            "place_id": place_id, "date": iso, "time": time, "party_size": party_size,
-            "status": "confirmed",
-        }],
-    })
+
+    # What this booking says about the guest. A first value is simply learned — an
+    # actual booking is better evidence of taste than anything said in passing. But
+    # once a standing preference is on file, one outing must not quietly rewrite it:
+    # those become a question for the guest (step 7b) rather than a silent update.
+    signals: dict[str, Any] = {"party_size": party_size}
+    # The place's own type first (it's what they actually ate), falling back to the
+    # cuisine the guest searched for when Google only says "restaurant".
+    booked_cuisine = _clean_cuisine(rec.get("cuisine")) or session.pending.get("cuisine")
+    if booked_cuisine:
+        signals["cuisines"] = [booked_cuisine]
+    if session.pending.get("location"):
+        signals["home_location"] = session.pending["location"]
+
+    conflicts = profile_memory.sticky_conflicts(session.profile, signals)
+    learn = {k: v for k, v in signals.items() if k not in conflicts}
+    learn["past_bookings"] = [{
+        "restaurant": rec["name"], "confirmation_id": booking.get("confirmation_id"),
+        "place_id": place_id, "date": iso, "time": time, "party_size": party_size,
+        "status": "confirmed",
+    }]
+    session.profile = profile_memory.remember(session.member_id, learn)
+
+    if conflicts:
+        _offer_preference_changes(session, conflicts)
+        result["preference_check"] = {
+            "proposals": conflicts,
+            "instruction": (
+                "This outing differs from the guest's saved standing preferences, "
+                "which were left UNCHANGED. Once you've confirmed the booking, ask "
+                "in ONE short, light question whether they'd like the saved value "
+                "updated (e.g. 'want me to make Brooklyn your home area from now "
+                "on?'). Ask once and move on. If they don't answer, change nothing "
+                "and never raise it again. Only on a clear yes, call "
+                "confirm_preference_updates with just the fields they agreed to."
+            ),
+        }
     return json.dumps(result, ensure_ascii=False)
 
 
@@ -947,6 +1330,7 @@ def _handle_highlights(session: ConciergeSession, args: dict[str, Any]) -> str:
 
 _HANDLERS = {
     "remember_guest_details": _handle_remember,
+    "confirm_preference_updates": _handle_confirm_prefs,
     "recall_guest_profile": _handle_recall,
     "set_confirmation_email": _handle_email,
     "recommend_restaurants": _handle_recommend,
@@ -1015,9 +1399,7 @@ def _run_turn(session: ConciergeSession, llm: Any) -> str:
         for call in response.tool_calls:
             result = _dispatch(session, call["name"], call.get("args") or {})
             session.messages.append(ToolMessage(content=result, tool_call_id=call["id"]))
-    session.messages.append(
-        HumanMessage(content="(Please respond to me directly now, no more tools.)")
-    )
+    session.messages.append(HumanMessage(content=_NO_MORE_TOOLS))
     final: AIMessage = llm.invoke(session.messages)
     session.messages.append(final)
     return (final.content or "").strip()
@@ -1026,7 +1408,12 @@ def _run_turn(session: ConciergeSession, llm: Any) -> str:
 def start_session(member_id: str) -> ConciergeSession:
     """Build a session, load any saved profile, and seed the system prompt."""
     profile = profile_memory.load(member_id)
-    session = ConciergeSession(member_id=profile_memory.resolve_key(member_id), profile=profile)
+    session = ConciergeSession(
+        member_id=profile_memory.resolve_key(member_id),
+        profile=profile,
+        # A recognized guest needs no "have we met?" — we already have their file.
+        asked_returning=bool((profile or {}).get("email")),
+    )
     # Ground the model in the real date so it never invents a calendar date — it
     # should pass the guest's own wording ("Friday") and let the tools resolve it.
     today = date.today()
