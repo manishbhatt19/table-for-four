@@ -43,7 +43,7 @@ uv run python -m table_for_four.mcp_servers.perks.inspect "gluten-free birthday"
 Semantic **member** recall (the "guest who loves X" search):
 
 ```bash
-uv run python -c "from agent.profile_memory import remember, find_members; remember('wine@x.com', {'name':'Giulia','cuisines':['Italian'],'interests':['Sicilian wine']}); remember('tacos@x.com', {'name':'Diego','interests':['street tacos']}); print([(m['name'], m['similarity']) for m in find_members('the guest who loves Sicilian wine')])"
+uv run python -c "from table_for_four.agent.profile_memory import remember, find_members; remember('wine@x.com', {'name':'Giulia','cuisines':['Italian'],'interests':['Sicilian wine']}); remember('tacos@x.com', {'name':'Diego','interests':['street tacos']}); print([(m['name'], m['similarity']) for m in find_members('the guest who loves Sicilian wine')])"
 ```
 
 Expect **Giulia** ranked first. (This writes to the real profile store; harmless demo data.)

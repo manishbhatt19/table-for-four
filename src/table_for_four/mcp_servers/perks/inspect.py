@@ -9,9 +9,9 @@ Runs offline against an ephemeral store built from the committed seed, so it's
 deterministic and writes nothing to disk.
 
 Examples:
-    uv run python -m mcp_servers.perks_inspect "romantic dinner with wine" --party 2
-    uv run python -m mcp_servers.perks_inspect "tacos with friends" --day Tue --weight 0.3
-    uv run python -m mcp_servers.perks_inspect "gluten-free birthday" --blurb
+    uv run python -m table_for_four.mcp_servers.perks.inspect "romantic dinner with wine" --party 2
+    uv run python -m table_for_four.mcp_servers.perks.inspect "tacos with friends" --day Tue --weight 0.3
+    uv run python -m table_for_four.mcp_servers.perks.inspect "gluten-free birthday" --blurb
 """
 
 from __future__ import annotations

@@ -234,7 +234,7 @@ def main() -> None:
             "Dino needs an OpenAI (or OpenRouter) key to talk. Add `OPENAI_API_KEY` "
             "to your `.env`, then restart this app.\n\n"
             "The offline booking demo still runs without a key: "
-            "`uv run python -m agent`."
+            "`uv run python -m table_for_four`."
         )
         return
 

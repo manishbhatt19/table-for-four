@@ -1,13 +1,13 @@
 """Runnable concierge demos — the commands to drive the agent.
 
 One-shot booking loop (offline-capable):
-    uv run python -m agent                       # default sample request
-    uv run python -m agent "sushi for 2 friday"  # custom request
-    uv run python -m agent --guest "Manish" "Italian for 4 friday 7pm"
+    uv run python -m table_for_four                       # default sample request
+    uv run python -m table_for_four "sushi for 2 friday"  # custom request
+    uv run python -m table_for_four --guest "Manish" "Italian for 4 friday 7pm"
 
 Interpersonal chat concierge (needs an OpenAI key; remembers guests in Chroma):
-    uv run python -m agent chat
-    uv run python -m agent chat --name "Manish"
+    uv run python -m table_for_four chat
+    uv run python -m table_for_four chat --name "Manish"
 
 The one-shot form runs the LangGraph orchestrator end-to-end and prints the
 reasoning trace and the final confirmation. It uses the LLM automatically if a key
@@ -27,7 +27,9 @@ DEFAULT_REQUEST = "Italian, near Midtown, 4 people, Friday 7pm, one guest is glu
 def _chat(argv: list[str]) -> None:
     from table_for_four.agent.concierge_chat import run_chat
 
-    ap = argparse.ArgumentParser(prog="agent chat", description="Interpersonal concierge chat")
+    ap = argparse.ArgumentParser(
+        prog="table_for_four chat", description="Interpersonal concierge chat"
+    )
     ap.add_argument("--name", default=None, help="guest name/handle (else prompted)")
     args = ap.parse_args(argv)
     run_chat(name=args.name)

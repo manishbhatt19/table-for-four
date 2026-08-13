@@ -15,8 +15,8 @@ The labels are deliberately by *restaurant*, not perk id: an intent like
 is the synthetic seed, so this runs fully offline and deterministically.
 
 Run it:
-    uv run python -m mcp_servers.perks_eval          # default weight
-    uv run python -m mcp_servers.perks_eval --sweep  # compare semantic weights
+    uv run python -m table_for_four.mcp_servers.perks.eval          # default weight
+    uv run python -m table_for_four.mcp_servers.perks.eval --sweep  # semantic weights
 """
 
 from __future__ import annotations

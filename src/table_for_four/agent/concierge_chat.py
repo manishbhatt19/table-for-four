@@ -33,8 +33,8 @@ What it demonstrates:
   duplicate bookings are idempotent.
 
 Run it:
-    uv run python -m agent chat
-    uv run python -m agent chat --name "Manish"
+    uv run python -m table_for_four chat
+    uv run python -m table_for_four chat --name "Manish"
 
 Requires an OpenAI (or OpenRouter) key in `.env`.
 """
@@ -1435,9 +1435,9 @@ def run_chat(name: str | None = None) -> None:
     if llm is None:
         print(
             "The interpersonal concierge needs an OpenAI (or OpenRouter) key.\n"
-            "Add OPENAI_API_KEY to your .env, then run `uv run python -m agent chat` "
-            "again.\n(The one-shot booking demo still runs offline: `uv run python -m "
-            "agent`.)"
+            "Add OPENAI_API_KEY to your .env, then run `uv run python -m table_for_four "
+            "chat` again.\n(The one-shot booking demo still runs offline: `uv run python "
+            "-m table_for_four`.)"
         )
         return
 
