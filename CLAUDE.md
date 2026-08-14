@@ -34,7 +34,8 @@ nothing else has to change.
 | Path | What it is |
 |---|---|
 | `agent/graph.py` | LangGraph state machine: parse → search → refine⟲ → perks → rank → propose → gate → book → audit |
-| `agent/concierge_chat.py` | Dino — the conversational front-end. System prompt, tool schemas, handlers, session state |
+| `agent/concierge_chat.py` | Dino — the conversational front-end. Tool schemas, handlers, session state |
+| `agent/roster/` | The five declared units, one `.md` each: grants in frontmatter, brief + tool descriptions in the body. `dino.md` **is** the system prompt |
 | `agent/profile_memory.py` | Long-term member memory in Chroma, keyed by email |
 | `agent/tools.py` | In-process tool registry — the agent's only route to the world |
 | `mcp_servers/{search,perks,booking,web}/` | One package per server; booking owns the FastAPI + SQLite ledger |
@@ -65,6 +66,13 @@ one awkward, that's a signal to stop, not to route around it.
 6. **The backend owns policy, not the model.** The 24 hour cancellation window is
    enforced in the FastAPI backend. Dino relays refusals verbatim and never claims
    a cancellation the ledger didn't confirm.
+7. **A unit only touches what its roster entry grants.** `_dispatch` runs each
+   handler as its owning unit; `agent/tools.py` and the `profile_memory` write
+   wrappers call `roster.require` before acting. Widening a grant means editing the
+   `.md` and saying why — never adding a call and letting it through.
+8. **Editing `roster/dino.md` breaks the golden test, on purpose.** Prompt changes
+   are fine; they just have to be deliberate and land in their own commit, with
+   `tests/golden/dino_system_prompt.txt` regenerated in the same one.
 
 ## Conventions
 
@@ -96,8 +104,12 @@ one awkward, that's a signal to stop, not to route around it.
 
 ## Current state
 
-M1–M3.6 shipped (search, booking, perks RAG, orchestrator, Dino, web highlights).
-**M4 is next: the human gate + governance/audit trail.** Two week 4 plans are
-written and not yet built: `docs/week4_agentic_harness.md` (roster of declared
-units with enforced tool grants, at zero added model cost) and
-`docs/week4_tree_of_thought.md` (the reasoned decision *against* tree search).
+M1–M3.6 shipped (search, booking, perks RAG, orchestrator, Dino, web highlights),
+plus the week 4 harness: `agent/roster/` — five declared units, enforced grants, and
+`actors` on the audit line, at zero added model cost (`docs/week4_agentic_harness.md`
+§11 records the measurements and the one place the plan gave way to the code).
+`docs/week4_tree_of_thought.md` is the reasoned decision *against* tree search and
+stays a decision, not a build.
+
+**M4 is next: the human gate + governance/audit trail.** `gate_node` still
+auto-approves; the `actors` field is the seam the governance trail hangs off.

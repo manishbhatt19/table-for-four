@@ -33,3 +33,4 @@ class ConciergeState(TypedDict, total=False):
     reasoning_mode: str                # "llm" | "heuristic"
     narrative: str                     # human-facing summary
     log: list[str]                     # step-by-step trace
+    actors: list[str]                  # roster units that acted, in order (audit trail)

@@ -33,6 +33,8 @@ import chromadb
 from chromadb.api.models.Collection import Collection
 from chromadb.utils import embedding_functions
 
+from table_for_four.agent import roster
+
 CHROMA_PATH = Path(__file__).parent / ".chroma_profiles"
 COLLECTION_NAME = "member_profiles"
 
@@ -334,18 +336,24 @@ def search_profiles(
 
 
 # --- Persistent-singleton wrappers (used by the chat tools) ------------------
+#
+# The three that *change* the book ask the roster broker first, so a unit that was
+# never granted memory cannot write to a guest's file even by accident. Reads stay
+# open: the harness governs what a unit can change, not what it can look up.
 
 def load(member_id: str) -> dict[str, Any] | None:
     return load_profile(get_collection(), member_id)
 
 
 def remember(member_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    roster.require("remember")
     return update_profile(get_collection(), member_id, updates)
 
 
 def adopt_email(
     current_member_id: str, email: str
 ) -> tuple[str, dict[str, Any], bool, dict[str, dict[str, Any]]]:
+    roster.require("adopt_email")
     return set_email(get_collection(), current_member_id, email)
 
 
@@ -373,4 +381,5 @@ def set_booking_status(
 
 
 def mark_booking(member_id: str, confirmation_id: str, status: str) -> dict[str, Any] | None:
+    roster.require("mark_booking")
     return set_booking_status(get_collection(), member_id, confirmation_id, status)

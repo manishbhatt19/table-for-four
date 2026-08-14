@@ -24,7 +24,7 @@ from typing import Any, Literal
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
-from table_for_four.agent import reasoning
+from table_for_four.agent import reasoning, roster
 from table_for_four.agent.config import get_llm
 from table_for_four.agent.state import ConciergeState
 from table_for_four.agent.tools import check_availability, create_booking, find_perks, search_restaurants
@@ -34,6 +34,18 @@ MAX_ITERATIONS = 2  # refine-retry guard so the loop can never spin
 
 def _log(state: ConciergeState, msg: str) -> list[str]:
     return list(state.get("log", [])) + [msg]
+
+
+def _acted(state: ConciergeState, unit: str) -> list[str]:
+    """Record that a roster unit did something in this run, first appearance wins.
+
+    The graph reaches the world through the same brokered registry the chat path
+    does, so the nodes that call a tool declare which unit they are acting as. That
+    makes "who did this?" answerable from the state rather than inferred from the
+    node name — which is precisely the field the M4 governance trail needs.
+    """
+    prior = list(state.get("actors", []))
+    return prior if unit in prior else prior + [unit]
 
 
 def _select_llm(state: ConciergeState) -> Any | None:
@@ -59,16 +71,18 @@ def parse_node(state: ConciergeState) -> dict[str, Any]:
 
 def search_node(state: ConciergeState) -> dict[str, Any]:
     c = state["constraints"]
-    out = search_restaurants(
-        query=state["request"],
-        cuisine=c.get("cuisine"),
-        location=c.get("location"),
-        max_price_level=c.get("max_price_level"),
-        min_rating=c.get("min_rating"),
-        open_now=c.get("open_now"),
-    )
+    with roster.acting_as("scout"):
+        out = search_restaurants(
+            query=state["request"],
+            cuisine=c.get("cuisine"),
+            location=c.get("location"),
+            max_price_level=c.get("max_price_level"),
+            min_rating=c.get("min_rating"),
+            open_now=c.get("open_now"),
+        )
     return {
         "candidates": out["results"],
+        "actors": _acted(state, "scout"),
         "log": _log(state, f"[search:{out['source']}] {out['result_count']} candidates"),
     }
 
@@ -109,14 +123,16 @@ def match_perks_node(state: ConciergeState) -> dict[str, Any]:
     candidates = state.get("candidates", [])
     if not candidates:
         return {"perks": [], "log": _log(state, "[perks] skipped (no candidates)")}
-    out = find_perks(
-        query=state["request"],
-        place_ids=[r["place_id"] for r in candidates],
-        party_size=c.get("party_size"),
-        day=c.get("day"),
-    )
+    with roster.acting_as("scout"):
+        out = find_perks(
+            query=state["request"],
+            place_ids=[r["place_id"] for r in candidates],
+            party_size=c.get("party_size"),
+            day=c.get("day"),
+        )
     return {
         "perks": out["results"],
+        "actors": _acted(state, "scout"),
         "log": _log(state, f"[perks:{out['source']}] {out['result_count']} matched"),
     }
 
@@ -141,7 +157,8 @@ def propose_node(state: ConciergeState) -> dict[str, Any]:
     r = chosen["restaurant"]
     c = state["constraints"]
     party_size = c.get("party_size", 2)
-    avail = check_availability(r["place_id"], c["date"], party_size)
+    with roster.acting_as("scout"):
+        avail = check_availability(r["place_id"], c["date"], party_size)
     slots = avail.get("available_slots", [])
     requested = c.get("time")
     time = requested if requested in slots else (slots[0] if slots else None)
@@ -156,7 +173,11 @@ def propose_node(state: ConciergeState) -> dict[str, Any]:
         "special_requests": c.get("special_requests"),
     }
     note = f"at {time} on {c['date']}" if time else "but no slots are open"
-    return {"proposal": proposal, "log": _log(state, f"[propose] {r['name']} {note}")}
+    return {
+        "proposal": proposal,
+        "actors": _acted(state, "scout"),
+        "log": _log(state, f"[propose] {r['name']} {note}"),
+    }
 
 
 def gate_node(state: ConciergeState) -> dict[str, Any]:
@@ -174,9 +195,14 @@ def route_after_gate(state: ConciergeState) -> Literal["book", "end"]:
 
 def book_node(state: ConciergeState) -> dict[str, Any]:
     proposal = state["proposal"]
-    result = create_booking(**proposal)
+    with roster.acting_as("booker"):
+        result = create_booking(**proposal)
     if not result.get("booked"):
-        return {"booking": result, "log": _log(state, f"[book] failed: {result.get('error')}")}
+        return {
+            "booking": result,
+            "actors": _acted(state, "booker"),
+            "log": _log(state, f"[book] failed: {result.get('error')}"),
+        }
     chosen = state["chosen"]
     narrative = reasoning.narrate(
         chosen["restaurant"], chosen.get("perk"), result, llm=_select_llm(state)
@@ -184,6 +210,7 @@ def book_node(state: ConciergeState) -> dict[str, Any]:
     return {
         "booking": result,
         "narrative": narrative,
+        "actors": _acted(state, "booker"),
         "log": _log(state, f"[book] confirmed {result['confirmation_id']}"),
     }
 
@@ -200,6 +227,9 @@ def audit_node(state: ConciergeState) -> dict[str, Any]:
         "perk_applied": (chosen.get("perk") or {}).get("perk_id"),
         "confirmation_id": booking.get("confirmation_id"),
         "booking_backend": booking.get("backend"),
+        # Who acted, not just what happened. An audit line that cannot name the
+        # actor is a diary; this is the field M4's governance trail is built on.
+        "actors": state.get("actors", []),
     }
     return {"log": _log(state, f"[audit] {json.dumps(summary)}")}
 

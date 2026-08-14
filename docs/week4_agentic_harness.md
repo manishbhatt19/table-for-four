@@ -3,11 +3,11 @@
 **CMU AI Agent Certification — Capstone · Week 4 Plan**
 **Author:** Manish Bhatt
 
-> A plan, not a submission. Week 4 is about the **agentic harness**: how an agent is
-> packaged, what it is allowed to do, and where its instructions live. This document
-> records the design decision and the phased build, under one hard constraint — the
-> harness must cost nothing extra in tokens or latency. Written against the working
-> code as of commit `ab5008e`; not yet implemented.
+> Week 4 is about the **agentic harness**: how an agent is packaged, what it is
+> allowed to do, and where its instructions live. This document records the design
+> decision and the phased build, under one hard constraint — the harness must cost
+> nothing extra in tokens or latency. Planned against commit `ab5008e`; all three
+> phases are now built, and §11 records what shipped and where it diverged.
 
 ---
 
@@ -155,3 +155,56 @@ bit-identical at the end of Phase 1 and behaviour-identical after Phase 3.
 Phase 1 alone is a complete, provable deliverable if the week runs short. Phases 1 → 2
 are the minimum for the harness to be more than documentation. Phase 3 is what carries
 into M4 governance.
+
+---
+
+## 11. What shipped
+
+All three phases. `src/table_for_four/agent/roster/` holds five `.md` files and a
+loader; the five units are declared, their grants are enforced at the tool registry
+and the profile store, and the audit line names the actor.
+
+**The cost table held, measured rather than asserted.**
+
+| Measure | Before | After |
+|---|---|---|
+| LLM call sites in the chat path | 2 | 2 |
+| System-prompt characters | 12,966 | 12,966 — golden test, byte for byte |
+| Serialized tool-schema characters | 6,624 | 6,624 |
+| Roster file reads | — | 5, at import |
+| Added work per tool call | — | one `ContextVar` read, one set lookup |
+
+Three implementation notes worth recording, because each is a place the plan met
+the code and the code won.
+
+**The broker sits in two modules, not one.** The plan put it in `tools.py`. But
+`profile_memory`'s writes are effects too — arguably the ones a guest would mind
+most — and they never pass through the tool registry. So `remember`, `adopt_email`
+and `mark_booking` call `roster.require` directly. Reads stay ungoverned: the
+harness constrains what a unit can *change*, not what it can look up.
+
+**Outside a declared unit, nothing is checked.** `require()` returns immediately
+when no unit is acting, so the perks eval script and the tests still call tools
+directly. This is deliberate. The roster constrains the units it declares; it is
+not a sandbox around the process, and a harness that quietly claimed to be one
+would be the decorated version of this week's work.
+
+**The Booker writes to the member book, and the roster says so.** §4's table had it
+holding no memory capability. In the code, `_handle_book` files the reservation in
+the guest's history and learns a first-ever cuisine or party size from it — an
+actual booking being better evidence of taste than anything said in passing. Rather
+than fictionalise the grant, `booker.md` grants `remember` and explains the line it
+still cannot cross: `sticky_conflicts` strips standing preferences out before the
+write and hands them back for Dino to ask about. So the guarantee that a birthday
+dinner in Brooklyn doesn't move the guest to Brooklyn is enforced by the memory
+layer, not the grant. The grant's job is narrower and still real — Scout and Curator
+have no business in the member book at all, and now cannot reach it.
+
+**What the tests can now say.** `tests/test_roster.py` (18 tests) asserts the two
+cost invariants and the boundaries: the Curator cannot book or write memory, the
+Scout cannot write a preference, the Booker cannot search or adopt an identity, the
+Steward can do neither of the other two jobs, Dino holds nothing at all. Two more
+guard the plumbing that makes those meaningful — every handler runs as the unit that
+owns it, and a grant breach propagates instead of being swallowed into a polite chat
+message. All of them passed the moment they were written; the point was never to
+find a bug, it was to stop one from being possible.
