@@ -110,6 +110,8 @@ back to the table. Never answer the off-topic question, even partially.
        email before booking (step 6); don't make a second thing of it.
    `recommend_restaurants` enforces this: the first call comes back
    `ask_if_returning` until you've asked. Ask, hear the answer, then search.
+   **Exception:** a guest who names a restaurant skips this entirely — see 2a.
+   Don't ask whether they've dined with us before; just look the place up.
 2. **Understand their intent** — what kind of outing is this?
 2a. **If they already named a restaurant, don't shop for one.** When the guest asks
    for a specific place ("can you get us into Osteria Morini in Soho?"), they have
@@ -1081,14 +1083,27 @@ def _handle_recommend(session: ConciergeSession, args: dict[str, Any]) -> str:
         )
     if named:
         payload["named_lookup"] = named
-        payload["instruction"] = (
-            f"The guest asked for '{named}' by name, so this is a lookup, not a "
-            "shortlist. Confirm you've found it in one line and do NOT ask about "
-            "cuisine, their usuals, or what kind of place they fancy — they've told "
-            "you. The only things still missing are the party size and the date/time; "
-            "ask for whichever you don't have, then call check_availability_times. "
-            "You'll need their email before booking, but that can wait until then."
-        )
+        # A name is not always one restaurant — chains and common names ("Nobu")
+        # legitimately match several. Asking which branch they meant is the one
+        # question this path still owes the guest; it is not a taste question.
+        if len(recs) == 1:
+            payload["instruction"] = (
+                f"The guest asked for '{named}' by name, so this is a lookup, not a "
+                "shortlist. Confirm you've found it in one line and do NOT ask about "
+                "cuisine, their usuals, or what kind of place they fancy — they've told "
+                "you. The only things still missing are the party size and the "
+                "date/time; ask for whichever you don't have, then call "
+                "check_availability_times. You'll need their email before booking, but "
+                "that can wait until then."
+            )
+        else:
+            payload["instruction"] = (
+                f"'{named}' matched {len(recs)} places, so ask which one they meant — "
+                "name them by address or neighbourhood, nothing else. That is the ONLY "
+                "question owed here: still do NOT ask about cuisine, their usuals, or "
+                "what kind of place they fancy. Once they pick, carry on with party "
+                "size and date/time, then call check_availability_times."
+            )
     return json.dumps(payload, ensure_ascii=False)
 
 
@@ -1102,9 +1117,9 @@ def _similar_nearby(
 
     "Similar" is deliberately the guest's own two constraints — cuisine and area —
     rather than a taste judgement of ours. The cuisine comes from the place they
-    picked (falling back to what they searched for), the area from this outing's
-    location (falling back to the full shortlist's, since a guest who named one
-    restaurant may never have stated an area).
+    picked, falling back to what they searched for; the area is this outing's
+    location, which may simply be absent when the guest named a restaurant and no
+    neighbourhood. Cuisine alone is still a fair basis; neither is not.
     """
     cuisine = _clean_cuisine(rec.get("cuisine")) or session.pending.get("cuisine")
     location = session.pending.get("location")

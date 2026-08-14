@@ -966,6 +966,29 @@ def test_naming_a_restaurant_skips_straight_to_the_lookup(monkeypatch):
     assert calls[0]["query"] == "Osteria"
 
 
+def test_an_ambiguous_name_asks_which_branch_not_which_cuisine(monkeypatch):
+    # "Nobu" is three restaurants. Asking which one they meant is the one question
+    # this path still owes the guest — it is not an excuse to reopen taste.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    monkeypatch.setattr(cc, "search_restaurants", lambda **k: {"source": "fixture", "results": [
+        {"place_id": "n1", "name": "Nobu Downtown", "address": "195 Broadway"},
+        {"place_id": "n2", "name": "Nobu Fifty Seven", "address": "40 W 57th St"},
+    ]})
+    monkeypatch.setattr(cc, "find_perks", lambda **k: {"results": []})
+
+    session = cc.ConciergeSession(member_id="sam")
+    out = _json.loads(cc._handle_recommend(session, {"restaurant_name": "Nobu"}))
+
+    assert out["named_lookup"] == "Nobu"
+    assert "matched 2 places" in out["instruction"]
+    assert "address or neighbourhood" in out["instruction"]
+    assert "do NOT ask about cuisine" in out["instruction"]
+    assert len(session.recommendations) == 2   # both bookable once they choose
+
+
 def test_a_named_restaurant_that_does_not_exist_is_never_swapped_for_another(monkeypatch):
     import json as _json
 
