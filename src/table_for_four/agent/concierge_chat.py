@@ -813,7 +813,7 @@ def _handle_email(session: ConciergeSession, args: dict[str, Any]) -> str:
                 "ask the guest for it and use exactly what they type."
             ),
         }, ensure_ascii=False)
-    key, profile, returning = profile_memory.adopt_email(session.member_id, email)
+    key, profile, returning, conflicts = profile_memory.adopt_email(session.member_id, email)
     session.member_id = key
     session.profile = profile
     session.asked_returning = True  # identity settled; don't gate the search on it
@@ -840,6 +840,24 @@ def _handle_email(session: ConciergeSession, args: dict[str, Any]) -> str:
             "last booking), and offer to reuse their saved details — even if you "
             "already greeted them generically."
         )
+    if conflicts:
+        # What they've said so far this session differs from their standing profile.
+        # Recognising someone is the worst possible moment to overwrite them, so the
+        # saved values stand and the difference becomes part of the welcome back.
+        _offer_preference_changes(session, conflicts)
+        payload["preference_check"] = {
+            "proposals": conflicts,
+            "instruction": (
+                "What the guest mentioned this session differs from the standing "
+                "preferences on their file, which were left UNCHANGED. Fold this into "
+                "your welcome back as ONE light question — 'I've got you down as "
+                "Manhattan, table for two — still right, or shall I make tonight's the "
+                "new usual?' Ask once, then carry on with tonight's booking either way "
+                "(this outing uses what they told you today regardless). If they don't "
+                "answer, change nothing and never raise it again. Only on a clear yes, "
+                "call confirm_preference_updates with just the fields they agreed to."
+            ),
+        }
     return json.dumps(payload, ensure_ascii=False)
 
 

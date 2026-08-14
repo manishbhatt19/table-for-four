@@ -267,13 +267,21 @@ def sticky_conflicts(
 
 def set_email(
     collection: Collection, current_member_id: str, email: str
-) -> tuple[str, dict[str, Any], bool]:
+) -> tuple[str, dict[str, Any], bool, dict[str, dict[str, Any]]]:
     """Adopt `email` as the guest's canonical identity.
 
     Merges the current (name-keyed) profile into any existing profile stored under
     that email, saves the result under the email key, and removes the provisional
-    name-keyed document. Returns `(email_key, merged_profile, was_returning)` where
-    `was_returning` is True if a profile already existed for that email.
+    name-keyed document. Returns `(email_key, merged_profile, was_returning,
+    conflicts)` where `was_returning` is True if a profile already existed for that
+    email.
+
+    Standing preferences already on file survive this merge. A guest who starts a
+    session under their name, mentions where they're eating tonight, and only then
+    gives the email they've booked under before must not have their home area or
+    usual party size quietly rewritten by that one outing — recognition is the
+    moment they'd notice it most. Those conflicts come back for the caller to ASK
+    about, exactly as a booking does.
     """
     email_key = normalize_email(email)
     current = load_profile(collection, current_member_id) or {}
@@ -281,7 +289,9 @@ def set_email(
     was_returning = existing is not None
 
     carry = {k: v for k, v in current.items() if k not in ("member_id", "updated_at")}
-    merged = _merge(existing or {}, {**carry, "email": email_key})
+    conflicts = sticky_conflicts(existing, carry)
+    keep = {k: v for k, v in carry.items() if k not in conflicts}
+    merged = _merge(existing or {}, {**keep, "email": email_key})
     saved = save_profile(collection, email_key, merged)
 
     old_key = resolve_key(current_member_id)
@@ -290,7 +300,7 @@ def set_email(
             collection.delete(ids=[old_key])
         except Exception:
             pass
-    return email_key, saved, was_returning
+    return email_key, saved, was_returning, conflicts
 
 
 # --- Semantic recall ---------------------------------------------------------
@@ -333,7 +343,9 @@ def remember(member_id: str, updates: dict[str, Any]) -> dict[str, Any]:
     return update_profile(get_collection(), member_id, updates)
 
 
-def adopt_email(current_member_id: str, email: str) -> tuple[str, dict[str, Any], bool]:
+def adopt_email(
+    current_member_id: str, email: str
+) -> tuple[str, dict[str, Any], bool, dict[str, dict[str, Any]]]:
     return set_email(get_collection(), current_member_id, email)
 
 

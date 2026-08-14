@@ -168,10 +168,11 @@ def test_resolve_key_distinguishes_email_from_name():
 def test_set_email_becomes_unique_key_and_migrates_provisional(collection):
     # A name-keyed provisional profile built up during intake...
     save_profile(collection, "Manish", {"name": "Manish", "cuisines": ["italian"]})
-    key, prof, returning = set_email(collection, "Manish", "Manish@Example.com")
+    key, prof, returning, conflicts = set_email(collection, "Manish", "Manish@Example.com")
 
     assert key == "manish@example.com"      # email normalized + canonical
     assert returning is False
+    assert conflicts == {}                  # nothing on file yet to conflict with
     assert prof["email"] == "manish@example.com"
     assert prof["cuisines"] == ["italian"]  # carried over from the provisional doc
     assert load_profile(collection, "Manish") is None          # provisional removed
@@ -185,11 +186,41 @@ def test_returning_member_recognized_by_email_and_details_merge(collection):
 
     # Second visit: fresh name-keyed session, a new cuisine, SAME email.
     save_profile(collection, "Manish", {"name": "Manish", "cuisines": ["japanese"]})
-    key, prof, returning = set_email(collection, "Manish", "m@x.com")
+    key, prof, returning, _ = set_email(collection, "Manish", "m@x.com")
 
     assert returning is True                 # recognized as a repeat guest
     assert prof["dietary"] == ["gluten-free"]  # remembered from the first visit
     assert prof["cuisines"] == ["japanese"]    # added this visit
+
+
+def test_adopting_an_email_does_not_overwrite_standing_preferences(collection):
+    # The consent gate's blind spot: it guarded `remember` and `book`, but a guest
+    # who starts a session under their name and gives their email later had their
+    # real profile rewritten by the merge — at the exact moment of being recognised.
+    save_profile(collection, "sam@x.com", {
+        "name": "Sam", "email": "sam@x.com", "home_location": "Manhattan",
+        "party_size": 2, "cuisines": ["italian", "japanese", "mexican"],
+        "dietary": ["nut-free"],
+    })
+    # Tonight: a bigger group, somewhere else, a cuisine he doesn't usually pick.
+    save_profile(collection, "Sam", {
+        "name": "Sam", "home_location": "Brooklyn", "party_size": 6,
+        "cuisines": ["thai"], "interests": ["jazz"],
+    })
+
+    _key, prof, returning, conflicts = set_email(collection, "Sam", "sam@x.com")
+
+    assert returning is True
+    # His standing profile is exactly as he left it...
+    assert prof["home_location"] == "Manhattan"
+    assert prof["party_size"] == 2
+    assert prof["cuisines"] == ["italian", "japanese", "mexican"]
+    # ...and the difference comes back as something to ask about, not to assume.
+    assert sorted(conflicts) == ["cuisines", "home_location", "party_size"]
+    assert conflicts["home_location"] == {"saved": "Manhattan", "proposed": "Brooklyn"}
+    # Everything that isn't a standing preference still merges freely.
+    assert prof["dietary"] == ["nut-free"]
+    assert prof["interests"] == ["jazz"]
 
 
 def test_email_must_come_from_a_guest_message(monkeypatch):
@@ -939,3 +970,30 @@ def test_giving_an_email_settles_identity_so_the_search_is_not_gated(monkeypatch
     cc._handle_email(session, {"email": "sam@x.com"})
 
     assert session.asked_returning is True
+
+
+def test_being_recognised_asks_about_a_changed_usual_rather_than_assuming(monkeypatch):
+    # Welcoming someone back must not be the moment their profile is rewritten.
+    import json as _json
+
+    import chromadb
+    from langchain_core.messages import HumanMessage
+
+    import table_for_four.agent.concierge_chat as cc
+    from table_for_four.agent import profile_memory as pm
+
+    monkeypatch.setattr(pm, "_collection", pm.build_collection(chromadb.EphemeralClient()))
+    pm.remember("sam@x.com", {"name": "Sam", "email": "sam@x.com",
+                              "home_location": "Manhattan", "party_size": 2})
+
+    # A fresh session under his name: he describes tonight before giving the email.
+    session = cc.ConciergeSession(member_id="sam")
+    session.messages = [HumanMessage(content="6 of us in Brooklyn — oh, it's sam@x.com")]
+    cc._handle_remember(session, {"home_location": "Brooklyn", "party_size": 6})
+    out = _json.loads(cc._handle_email(session, {"email": "sam@x.com"}))
+
+    assert out["returning_member"] is True
+    assert out["saved_preferences"]["home_location"] == "Manhattan"   # untouched
+    assert out["saved_preferences"]["party_size"] == 2
+    assert sorted(out["preference_check"]["proposals"]) == ["home_location", "party_size"]
+    assert session.pref_offer["proposals"]        # and the offer is on the record
