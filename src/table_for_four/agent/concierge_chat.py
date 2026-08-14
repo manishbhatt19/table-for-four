@@ -111,6 +111,17 @@ back to the table. Never answer the off-topic question, even partially.
    `recommend_restaurants` enforces this: the first call comes back
    `ask_if_returning` until you've asked. Ask, hear the answer, then search.
 2. **Understand their intent** — what kind of outing is this?
+2a. **If they already named a restaurant, don't shop for one.** When the guest asks
+   for a specific place ("can you get us into Osteria Morini in Soho?"), they have
+   already made every choice a shortlist would help with. Call
+   `recommend_restaurants` with `restaurant_name` (and `location` if they gave one)
+   and **nothing about cuisine**. Do NOT ask what kind of food they fancy, do NOT
+   offer their usuals, and skip step 2b entirely — asking reads as not having
+   listened. The only things left to gather are **party size** and **date/time**;
+   ask for whichever is missing and go straight to step 5. Their email can wait
+   until step 6, and you may frame it as where the confirmation should go.
+   If the tool comes back `restaurant_not_found`, say so plainly and offer to find
+   somewhere similar — never quietly substitute a different restaurant.
 2b. **Ask how they'd like to choose — never assume.** Remembering a guest's usuals
    is for *offering*, not for deciding. Before you search, put the choice to them
    in one friendly question with three ways in:
@@ -141,6 +152,13 @@ back to the table. Never answer the off-topic question, even partially.
    restaurants the tool returned.
 5. **Guest picks one** → call `check_availability_times` and tell them the open
    times for that restaurant and date. Only offer times the tool returned.
+5b. **If it's full, offer somewhere similar — don't just say no.** A
+   `no_availability` result comes back with `alternatives`: restaurants of the same
+   cuisine in the same area, already looked up and bookable. Say briefly that the
+   first choice is full that day, then offer those **by name**, mentioning any perk,
+   and ask whether they'd like one of them **or** would rather try a different date
+   at their first choice. Both are real options — put them side by side rather than
+   steering. Never invent an alternative that isn't in that list.
 6. **Book** — once they choose an available time, **read the details back and get a
    yes first**: "Booking [restaurant], [date] at [time] for [party size] — shall I
    confirm?" You MUST have the **date**, the **time**, and the **party size** — if
@@ -206,8 +224,12 @@ Learning a value for the *first* time is not a change and needs no permission.
   adjusted criteria if the guest wants different options. If it returns
   `ask_if_returning`, no search ran: ask the step-1b question first, then call it
   again. `cuisine` must be an actual cuisine ("Italian", "sushi") — never a
-  restaurant's name and never a category like "restaurant" or "food".
-- `check_availability_times` — get open times for a chosen restaurant + date.
+  restaurant's name and never a category like "restaurant" or "food". When the
+  guest named a venue, pass it as `restaurant_name` instead and leave `cuisine`
+  empty — that's a direct lookup and it skips the "have we met?" question too.
+- `check_availability_times` — get open times for a chosen restaurant + date. When
+  nothing is free it returns `alternatives`: similar places nearby, already
+  bookable (see step 5b).
 - `book_table` — book a specific restaurant at a specific available time. Requires
   the guest's email to be on file first.
 - `cancel_reservation` — cancel a booking by its confirmation id. The 24-hour
@@ -331,11 +353,21 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "description": (
                 "Get a shortlist of restaurants for the guest's criteria, each flagged "
                 "with whether it carries a special perk. Call again with adjusted "
-                "criteria to refine."
+                "criteria to refine. If the guest already named the restaurant they "
+                "want, pass `restaurant_name` and nothing about cuisine — that looks "
+                "the place up directly instead of shortlisting alternatives."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "restaurant_name": {
+                        "type": "string",
+                        "description": (
+                            "The venue the guest asked for BY NAME ('Osteria Morini'). "
+                            "Set this only when they named a specific restaurant; it "
+                            "skips the cuisine question entirely."
+                        ),
+                    },
                     "cuisine": {"type": "string"},
                     "location": {"type": "string", "description": "Neighborhood/area."},
                     "party_size": {"type": "integer"},
@@ -861,14 +893,73 @@ def _handle_email(session: ConciergeSession, args: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def _shortlist(
+    session: ConciergeSession,
+    candidates: list[dict[str, Any]],
+    keywords: str,
+    party_size: int | None,
+    day: str | None,
+    limit: int = MAX_RECOMMENDATIONS,
+    exclude: set[str] = frozenset(),
+) -> list[dict[str, Any]]:
+    """Turn raw search hits into perk-flagged rows, registered as bookable.
+
+    Shared by the shortlist and by the alternatives offered when a restaurant has
+    no tables free: an alternative the guest can't then book would be a tease, and
+    only rows in `session.recommendations` survive the checks in `book_table`.
+    """
+    picked = [c for c in candidates if c.get("place_id") not in exclude][:limit]
+    if not picked:
+        return []
+    perks = find_perks(
+        query=keywords,
+        place_ids=[c["place_id"] for c in picked],
+        party_size=party_size,
+        day=day,
+    ).get("results", [])
+    best_perk: dict[str, dict[str, Any]] = {}
+    for p in perks:
+        pid = p.get("place_id")
+        if pid and p.get("similarity", 0) > best_perk.get(pid, {}).get("similarity", -1):
+            best_perk[pid] = p
+
+    recs = []
+    for c in picked:
+        perk = best_perk.get(c["place_id"])
+        rec = {
+            "place_id": c["place_id"],
+            "name": c["name"],
+            "address": c.get("address"),
+            "phone": c.get("phone"),
+            "website": c.get("website"),
+            "cuisine": _cuisine_from_place_type(c.get("primary_type")),
+            "rating": c.get("rating"),
+            "price_level": c.get("price_level"),
+            "has_perk": bool(perk),
+            "perk_sample": False,
+            "perk_title": (perk or {}).get("title"),
+            "perk_id": (perk or {}).get("perk_id"),
+        }
+        recs.append(rec)
+        session.recommendations[c["place_id"]] = rec
+    return recs
+
+
 def _handle_recommend(session: ConciergeSession, args: dict[str, Any]) -> str:
+    # A guest who names the restaurant has already made every choice the shortlist
+    # exists to help with. Asking them what cuisine they fancy, or which of their
+    # usuals to reuse, reads as not having listened — so the name short-circuits
+    # both the taste questions and the "have we met?" gate, and we go straight to
+    # looking the place up. The email is still required before booking (step 6).
+    named = (args.get("restaurant_name") or "").strip()
+
     # Have we met before? A guest who has booked with Dino already has cuisines, an
     # area, a party size and dietary needs on file — all of it worth searching WITH
     # rather than discovering again. But we only find them by email, so ask for it
     # BEFORE the first search instead of at booking time, when it's too late to
     # shape the shortlist. Asked once per session, and never when we already have a
     # profile: a guest saying "no, I'm new" is a fine answer that unblocks the search.
-    if not (session.profile or {}).get("email"):
+    if not named and not (session.profile or {}).get("email"):
         if not session.asked_returning:
             session.asked_returning = True
             session.returning_asked_at = len(session.messages)
@@ -895,8 +986,10 @@ def _handle_recommend(session: ConciergeSession, args: dict[str, Any]) -> str:
                 ),
             }, ensure_ascii=False)
 
-    cuisine = args.get("cuisine")
-    keywords = args.get("keywords") or cuisine or "restaurant"
+    # Searching by name means searching for that place, not for its category: a
+    # cuisine filter here can only exclude the very restaurant being asked for.
+    cuisine = None if named else args.get("cuisine")
+    keywords = named or args.get("keywords") or cuisine or "restaurant"
     party_size = args.get("party_size")
     # Working memory: remember the outing's party size / date as they're mentioned.
     if party_size:
@@ -927,9 +1020,14 @@ def _handle_recommend(session: ConciergeSession, args: dict[str, Any]) -> str:
         min_rating=args.get("min_rating"),
     )
     candidates = search.get("results", [])
-    # An over-specific keyword string can zero out live results; retry once with a
-    # minimal query so we keep the requested cuisine instead of dropping it.
-    if not candidates and (cuisine or args.get("location")):
+    if not candidates and named:
+        # The area may just be loosely worded ("Soho" vs the listed address), so try
+        # the name alone. What we must NOT do is fall back to a generic search and
+        # present strangers as though they were the restaurant they asked for.
+        candidates = search_restaurants(query=named).get("results", [])
+    elif not candidates and (cuisine or args.get("location")):
+        # An over-specific keyword string can zero out live results; retry once with a
+        # minimal query so we keep the requested cuisine instead of dropping it.
         search = search_restaurants(
             query=cuisine or "restaurant",
             cuisine=cuisine,
@@ -937,44 +1035,25 @@ def _handle_recommend(session: ConciergeSession, args: dict[str, Any]) -> str:
         )
         candidates = search.get("results", [])
     if not candidates:
+        if named:
+            return json.dumps({
+                "status": "restaurant_not_found",
+                "restaurant_name": named,
+                "message": (
+                    f"Couldn't find '{named}'. Say so plainly, check you have the name "
+                    "and area right, and offer to look for somewhere similar nearby — "
+                    "then call recommend_restaurants with a cuisine and location "
+                    "instead. Never present a different restaurant as the one they asked for."
+                ),
+            }, ensure_ascii=False)
         return json.dumps({
             "status": "no_matches",
             "message": "No restaurants matched. Ask the guest to relax a filter "
                        "(cuisine, area, price) and call recommend_restaurants again.",
         }, ensure_ascii=False)
 
-    perks = find_perks(
-        query=keywords,
-        place_ids=[c["place_id"] for c in candidates],
-        party_size=party_size,
-        day=day,
-    ).get("results", [])
-    best_perk: dict[str, dict[str, Any]] = {}
-    for p in perks:
-        pid = p.get("place_id")
-        if pid and p.get("similarity", 0) > best_perk.get(pid, {}).get("similarity", -1):
-            best_perk[pid] = p
-
     session.recommendations = {}
-    recs = []
-    for c in candidates[:MAX_RECOMMENDATIONS]:
-        perk = best_perk.get(c["place_id"])
-        rec = {
-            "place_id": c["place_id"],
-            "name": c["name"],
-            "address": c.get("address"),
-            "phone": c.get("phone"),
-            "website": c.get("website"),
-            "cuisine": _cuisine_from_place_type(c.get("primary_type")),
-            "rating": c.get("rating"),
-            "price_level": c.get("price_level"),
-            "has_perk": bool(perk),
-            "perk_sample": False,
-            "perk_title": (perk or {}).get("title"),
-            "perk_id": (perk or {}).get("perk_id"),
-        }
-        recs.append(rec)
-        session.recommendations[c["place_id"]] = rec
+    recs = _shortlist(session, candidates, keywords, party_size, day)
 
     # Live restaurants have real Google ids that our synthetic (fixture-keyed) perks
     # can't match, so nothing gets flagged. In that case attach a cuisine-matched
@@ -1000,7 +1079,57 @@ def _handle_recommend(session: ConciergeSession, args: dict[str, Any]) -> str:
             "These are SAMPLE partner offers (illustrative, not the restaurant's real "
             "promotion). Present them as a 'sample partner offer' when you mention them."
         )
+    if named:
+        payload["named_lookup"] = named
+        payload["instruction"] = (
+            f"The guest asked for '{named}' by name, so this is a lookup, not a "
+            "shortlist. Confirm you've found it in one line and do NOT ask about "
+            "cuisine, their usuals, or what kind of place they fancy — they've told "
+            "you. The only things still missing are the party size and the date/time; "
+            "ask for whichever you don't have, then call check_availability_times. "
+            "You'll need their email before booking, but that can wait until then."
+        )
     return json.dumps(payload, ensure_ascii=False)
+
+
+ALTERNATIVES_WHEN_FULL = 3
+
+
+def _similar_nearby(
+    session: ConciergeSession, rec: dict[str, Any], party_size: int | None, iso: str
+) -> list[dict[str, Any]]:
+    """Restaurants of the same kind, in the same area, when the first choice is full.
+
+    "Similar" is deliberately the guest's own two constraints — cuisine and area —
+    rather than a taste judgement of ours. The cuisine comes from the place they
+    picked (falling back to what they searched for), the area from this outing's
+    location (falling back to the full shortlist's, since a guest who named one
+    restaurant may never have stated an area).
+    """
+    cuisine = _clean_cuisine(rec.get("cuisine")) or session.pending.get("cuisine")
+    location = session.pending.get("location")
+    if not (cuisine or location):
+        return []  # nothing to be similar *to*; don't offer arbitrary restaurants
+
+    query = f"{cuisine} restaurant" if cuisine else "restaurant"
+    try:
+        found = search_restaurants(query=query, cuisine=cuisine, location=location)
+    except Exception:
+        return []  # a dead search must not take the availability answer down with it
+    day = None
+    try:
+        _, day = reasoning.resolve_date(iso)
+    except Exception:
+        day = None
+    return _shortlist(
+        session,
+        found.get("results", []),
+        query,
+        party_size,
+        day,
+        limit=ALTERNATIVES_WHEN_FULL,
+        exclude={rec.get("place_id")},
+    )
 
 
 def _handle_times(session: ConciergeSession, args: dict[str, Any]) -> str:
@@ -1029,11 +1158,30 @@ def _handle_times(session: ConciergeSession, args: dict[str, Any]) -> str:
     session.pending.update({"place_id": place_id, "restaurant": rec["name"],
                             "date": iso, "party_size": party_size})
     if not slots:
-        return json.dumps({
+        # A closed door is not an answer. Before handing the guest back a "no", look
+        # for places of the same kind in the same area — that's what they'd ask for
+        # next anyway, and having it ready turns a dead end into a choice.
+        alternatives = _similar_nearby(session, rec, party_size, iso)
+        payload: dict[str, Any] = {
             "status": "no_availability", "restaurant": rec["name"], "date": iso,
-            "message": "No tables free then. Offer another date/time or an alternate "
-                       "restaurant from the recommendations.",
-        }, ensure_ascii=False)
+            "message": "No tables free then.",
+        }
+        if alternatives:
+            payload["alternatives"] = alternatives
+            payload["instruction"] = (
+                f"{rec['name']} is full on {iso}. Say so briefly, then offer these "
+                "similar places in the same area — by name, mentioning any perk — and "
+                "ask whether they'd like one of them or would rather try a different "
+                "date at their first choice. They are already bookable: call "
+                "check_availability_times with the place_id the guest picks. Do not "
+                "invent alternatives beyond this list."
+            )
+        else:
+            payload["instruction"] = (
+                "Nothing similar came back nearby either. Offer another date or time "
+                "at the same restaurant, or ask whether to widen the area."
+            )
+        return json.dumps(payload, ensure_ascii=False)
     return json.dumps({
         "status": "ok", "restaurant": rec["name"], "date": iso, "available_times": slots,
         "remembered": {"restaurant": rec["name"], "date": iso, "party_size": party_size},

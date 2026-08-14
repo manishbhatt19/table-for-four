@@ -938,6 +938,109 @@ def test_first_search_asks_whether_the_guest_has_dined_with_us_before(monkeypatc
     assert len(calls) == 1
 
 
+def test_naming_a_restaurant_skips_straight_to_the_lookup(monkeypatch):
+    # Guest feedback: someone who asks for a named place should not be quizzed about
+    # cuisine or their usuals. They've chosen; we look it up and get on with it.
+    import json as _json
+
+    from langchain_core.messages import HumanMessage
+
+    import table_for_four.agent.concierge_chat as cc
+
+    calls: list = []
+    _patch_search(monkeypatch, calls)
+
+    session = cc.ConciergeSession(member_id="sam")   # brand new, no email on file
+    session.messages = [HumanMessage(content="can you get us into Osteria, Friday?")]
+    out = _json.loads(cc._handle_recommend(
+        session, {"restaurant_name": "Osteria", "location": "Soho", "cuisine": "thai"}
+    ))
+
+    # No "have we met before?" gate — that question is for people still choosing.
+    assert out["status"] == "ok"
+    assert out["named_lookup"] == "Osteria"
+    assert "do NOT ask about cuisine" in out["instruction"]
+    assert len(calls) == 1
+    # The cuisine is dropped: filtering by it could only exclude the place they named.
+    assert calls[0]["cuisine"] is None
+    assert calls[0]["query"] == "Osteria"
+
+
+def test_a_named_restaurant_that_does_not_exist_is_never_swapped_for_another(monkeypatch):
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    monkeypatch.setattr(cc, "search_restaurants", lambda **k: {"source": "fixture", "results": []})
+    monkeypatch.setattr(cc, "find_perks", lambda **k: {"results": []})
+
+    session = cc.ConciergeSession(member_id="sam")
+    out = _json.loads(cc._handle_recommend(session, {"restaurant_name": "Chez Nonexistent"}))
+
+    assert out["status"] == "restaurant_not_found"
+    assert out["restaurant_name"] == "Chez Nonexistent"
+    assert session.recommendations == {}   # nothing offered in its place
+
+
+def test_a_full_restaurant_comes_back_with_similar_places_nearby(monkeypatch):
+    # Guest feedback: "no tables" is not an answer. Offer the same kind of food in
+    # the same area, already bookable, alongside the option of another date.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    searches: list = []
+
+    def fake_search(**kwargs):
+        searches.append(kwargs)
+        return {"source": "fixture", "results": [
+            {"place_id": "p1", "name": "Osteria", "primary_type": "italian_restaurant"},
+            {"place_id": "p2", "name": "Trattoria Due", "primary_type": "italian_restaurant"},
+            {"place_id": "p3", "name": "Vino e Cucina", "primary_type": "italian_restaurant"},
+        ]}
+
+    monkeypatch.setattr(cc, "search_restaurants", fake_search)
+    monkeypatch.setattr(cc, "find_perks", lambda **k: {"results": []})
+    monkeypatch.setattr(cc, "check_availability", lambda *a, **k: {"available_slots": []})
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    session.recommendations = {"p1": {"place_id": "p1", "name": "Osteria", "cuisine": "italian"}}
+    session.pending["location"] = "Soho"
+
+    out = _json.loads(cc._handle_times(session, {"place_id": "p1", "date": FUTURE_DATE}))
+
+    assert out["status"] == "no_availability"
+    names = [a["name"] for a in out["alternatives"]]
+    assert names == ["Trattoria Due", "Vino e Cucina"]   # the full one is excluded
+    # Same cuisine, same area — the guest's own two constraints, not our taste.
+    assert searches[-1]["cuisine"] == "italian"
+    assert searches[-1]["location"] == "Soho"
+    # And they're bookable, or offering them would be a tease.
+    assert "p2" in session.recommendations and "p3" in session.recommendations
+
+
+def test_no_similar_places_offered_when_there_is_nothing_to_be_similar_to(monkeypatch):
+    # Without a cuisine or an area, "similar" would just mean "arbitrary".
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    searches: list = []
+    monkeypatch.setattr(cc, "search_restaurants", lambda **k: searches.append(k) or {
+        "source": "fixture", "results": []})
+    monkeypatch.setattr(cc, "find_perks", lambda **k: {"results": []})
+    monkeypatch.setattr(cc, "check_availability", lambda *a, **k: {"available_slots": []})
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    session.recommendations = {"p1": {"place_id": "p1", "name": "Osteria", "cuisine": None}}
+
+    out = _json.loads(cc._handle_times(session, {"place_id": "p1", "date": FUTURE_DATE}))
+
+    assert out["status"] == "no_availability"
+    assert "alternatives" not in out
+    assert searches == []   # no pointless search ran
+
+
 def test_a_recognized_guest_is_never_asked_if_they_have_dined_before(monkeypatch):
     # We already have their file — asking would be the opposite of remembering.
     import json as _json
