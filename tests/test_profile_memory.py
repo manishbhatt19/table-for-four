@@ -283,6 +283,14 @@ def _listed(session, place_id="p1", name="Osteria", perk_id=None):
     session.recommendations = {place_id: {"place_id": place_id, "name": name, "perk_id": perk_id}}
 
 
+def _offered(session, place_id="p1", day=None, slots=("19:00", "20:00")):
+    # Step 5 of the journey actually happened: the guest gave a date and was shown
+    # the open times for it. A booking test that skips this isn't testing booking —
+    # it's testing the hole where a made-up time got through.
+    session.availability = {"place_id": place_id, "date": day or FUTURE_DATE,
+                            "party_size": 2, "slots": list(slots)}
+
+
 def test_book_is_idempotent_per_request(monkeypatch):
     # An identical booking must not create a second reservation.
     import json as _json
@@ -300,6 +308,7 @@ def test_book_is_idempotent_per_request(monkeypatch):
 
     session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com", "party_size": 4})
     _listed(session)
+    _offered(session)
     args = {"place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 4}
 
     first = _json.loads(cc._handle_book(session, args))
@@ -360,6 +369,74 @@ def test_book_requires_a_party_size(monkeypatch):
     assert called["n"] == 0  # booking backend never hit without a party size
 
 
+def test_book_refuses_a_time_the_guest_was_never_offered(monkeypatch):
+    # Demo feedback, and the bug this guards: Dino booked a table without ever
+    # asking what day or what time. Nothing stopped it — the "is this one of the
+    # slots we offered?" check only ran when availability had been looked up, so
+    # skipping step 5 skipped the check with it, and a plausible "19:00" booked.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    called = {"n": 0}
+    monkeypatch.setattr(cc, "create_booking", lambda **k: called.__setitem__("n", called["n"] + 1) or {})
+
+    # Everything else is in order: email, party size, a real recommendation. The
+    # only thing missing is that no times were ever shown to the guest.
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com", "party_size": 2})
+    _listed(session)
+    out = _json.loads(cc._handle_book(session, {
+        "place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 2,
+    }))
+
+    assert out["status"] == "need_availability_check"
+    assert called["n"] == 0  # no invented time reaches the ledger
+
+
+def test_book_refuses_a_date_the_guest_never_picked(monkeypatch):
+    # The subtler half of the same bug: times were offered, but for a different day
+    # than the one being booked. A model that quietly moved the outing to a date
+    # nobody agreed to must not get a table for it.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    called = {"n": 0}
+    monkeypatch.setattr(cc, "create_booking", lambda **k: called.__setitem__("n", called["n"] + 1) or {})
+
+    later = (date.today() + timedelta(days=9)).isoformat()
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com", "party_size": 2})
+    _listed(session)
+    _offered(session)  # times shown for FUTURE_DATE...
+    out = _json.loads(cc._handle_book(session, {
+        "place_id": "p1", "date": later, "time": "19:00", "party_size": 2,  # ...booked for another
+    }))
+
+    assert out["status"] == "need_availability_check"
+    assert out["requested_date"] == later
+    assert called["n"] == 0
+
+
+def test_book_refuses_when_nothing_was_free(monkeypatch):
+    # We looked and the restaurant was full. Booking anyway would invent a table.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    called = {"n": 0}
+    monkeypatch.setattr(cc, "create_booking", lambda **k: called.__setitem__("n", called["n"] + 1) or {})
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com", "party_size": 2})
+    _listed(session)
+    _offered(session, slots=())
+    out = _json.loads(cc._handle_book(session, {
+        "place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 2,
+    }))
+
+    assert out["status"] == "no_availability"
+    assert called["n"] == 0
+
+
 def test_every_tool_result_restates_what_we_already_know():
     # Guests notice being asked twice. Rather than trusting the model to remember
     # across a long chat, each tool result carries the known facts back to it.
@@ -409,6 +486,7 @@ def test_booking_records_the_cuisine_as_a_recent_preference(monkeypatch):
 
     session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
     session.recommendations = {"p1": {"place_id": "p1", "name": "Osteria", "cuisine": "italian"}}
+    _offered(session)
     out = _json.loads(cc._handle_book(session, {
         "place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 4,
     }))
@@ -442,6 +520,7 @@ def _booking_session(profile):
     session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com", **profile})
     session.recommendations = {"p1": {"place_id": "p1", "name": "Osteria", "cuisine": "thai"}}
     session.pending["location"] = "Brooklyn"
+    _offered(session)
     return session
 
 
@@ -882,6 +961,7 @@ def test_booking_a_generically_typed_place_falls_back_to_the_searched_cuisine(mo
     session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
     session.recommendations = {"p1": {"place_id": "p1", "name": "Corner Table", "cuisine": None}}
     session.pending["cuisine"] = "italian"  # what they searched for
+    _offered(session)
     args = {"place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 4}
     assert _json.loads(cc._handle_book(session, args))["status"] == "booked"
     assert remembered["cuisines"] == ["italian"]

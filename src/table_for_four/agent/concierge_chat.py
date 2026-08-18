@@ -1029,25 +1029,46 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
                        "default it.",
         }, ensure_ascii=False)
 
-    # The time must be one we actually offered for this restaurant + date.
+    # The time must be one we actually offered for this restaurant on this date.
+    # Everything below used to hang off `if pend and ...`, which meant a model that
+    # skipped step 5 entirely — never asked for a day, never showed the guest a
+    # single open slot — fell straight past the checks with a plausible-looking
+    # "19:00" and booked it. That is the same bug as inventing a restaurant, and it
+    # gets the same answer: no offered slots, no booking. Demo feedback, and the
+    # reason the refusal lives here rather than only in the brief.
     pend = session.availability
-    if pend and pend["place_id"] == place_id and pend["date"] == iso and pend["slots"]:
-        if time not in pend["slots"]:
-            return json.dumps({
-                "status": "time_unavailable", "available_times": pend["slots"],
-                "message": "That time isn't available; offer one of the available_times.",
-            }, ensure_ascii=False)
-        # If the guest explicitly asked for an available time, book THAT time — don't
-        # silently substitute a different open slot (the random-time bug).
-        wanted = _requested_times(session) & set(pend["slots"])
-        if wanted and time not in wanted:
-            return json.dumps({
-                "status": "time_mismatch",
-                "requested_times": sorted(wanted),
-                "attempted_time": time,
-                "message": "The guest asked for a specific available time. Book exactly "
-                           "that (one of requested_times), not a different slot.",
-            }, ensure_ascii=False)
+    if not (pend and pend["place_id"] == place_id and pend["date"] == iso):
+        return json.dumps({
+            "status": "need_availability_check",
+            "requested_date": iso,
+            "message": "No open times have been offered for this restaurant on this "
+                       "date. Confirm the date with the guest, call "
+                       "check_availability_times, show them what came back, and book "
+                       "only the time they pick. Never assume a date or a time.",
+        }, ensure_ascii=False)
+    if not pend["slots"]:
+        # We did look, and there was nothing. Booking anyway would invent a table.
+        return json.dumps({
+            "status": "no_availability", "date": iso,
+            "message": "Nothing was free at this restaurant on this date. Offer the "
+                       "alternatives or another date — do not book.",
+        }, ensure_ascii=False)
+    if time not in pend["slots"]:
+        return json.dumps({
+            "status": "time_unavailable", "available_times": pend["slots"],
+            "message": "That time isn't available; offer one of the available_times.",
+        }, ensure_ascii=False)
+    # If the guest explicitly asked for an available time, book THAT time — don't
+    # silently substitute a different open slot (the random-time bug).
+    wanted = _requested_times(session) & set(pend["slots"])
+    if wanted and time not in wanted:
+        return json.dumps({
+            "status": "time_mismatch",
+            "requested_times": sorted(wanted),
+            "attempted_time": time,
+            "message": "The guest asked for a specific available time. Book exactly "
+                       "that (one of requested_times), not a different slot.",
+        }, ensure_ascii=False)
 
     key = f"{place_id}|{iso}|{time}"
     if key in session.bookings:  # idempotency
