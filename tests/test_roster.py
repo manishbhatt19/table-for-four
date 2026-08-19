@@ -219,7 +219,10 @@ def test_the_audit_line_says_who_acted():
     from table_for_four.mcp_servers.booking.backend.app import reset_store
 
     reset_store()
-    final = run_concierge("Italian dinner for 2 on Friday", use_llm=False)
+    # `approve=True` is the human saying yes at the M4 gate. Without it there is
+    # no booking, so Booker never acts — which is the gate doing its job, not a
+    # broken test.
+    final = run_concierge("Italian dinner for 2 on Friday", use_llm=False, approve=True)
 
     assert final["actors"] == ["scout", "booker"]
     audit = next(line for line in final["log"] if line.startswith("[audit]"))

@@ -34,3 +34,5 @@ class ConciergeState(TypedDict, total=False):
     narrative: str                     # human-facing summary
     log: list[str]                     # step-by-step trace
     actors: list[str]                  # roster units that acted, in order (audit trail)
+    audit: list[dict[str, Any]]        # M4 governance records: what, who, when
+    approval: dict[str, Any] | None    # what the human was shown and what they said

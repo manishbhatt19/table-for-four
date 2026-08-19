@@ -12,6 +12,9 @@ from table_for_four.mcp_servers.booking.backend.app import reset_store
 
 def _run(request, **kw):
     reset_store()
+    # M4: the gate is real, so a run that wants a booking has to say yes to it.
+    # Leaving `approve` out is a refusal, which is what the gate tests rely on.
+    kw.setdefault("approve", True)
     return run_concierge(request, use_llm=False, **kw)
 
 

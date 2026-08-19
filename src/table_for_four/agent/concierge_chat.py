@@ -60,6 +60,7 @@ from table_for_four.agent.tools import (
     place_photos,
     search_restaurants,
 )
+from table_for_four.governance import audit, grounding
 
 MAX_TOOL_HOPS = 6  # guard: bound tool-call chaining within a single guest turn
 MAX_RECOMMENDATIONS = 4
@@ -293,44 +294,26 @@ class ConciergeSession:
     pref_offer: dict[str, Any] = field(default_factory=dict)        # standing-pref change put to the guest
     asked_returning: bool = False                                   # "have we met before?" put to the guest
     returning_asked_at: int = 0                                     # where in the transcript we asked it
+    # Everything a tool has actually offered this session. The grounding check
+    # reads these, so they accumulate rather than tracking only the last lookup:
+    # recapping the times of a restaurant discussed ten turns ago is legitimate.
+    offered_times: set[str] = field(default_factory=set)
+    offered_dates: set[str] = field(default_factory=set)
+    trail: audit.Trail = field(default_factory=audit.Trail)         # M4 governance record
+
+    def __post_init__(self) -> None:
+        self.trail.member_id = self.member_id
 
     @property
     def display_name(self) -> str:
         return (self.profile or {}).get("name") or self.member_id
 
 
-# Times the guest may type: "7pm", "7:30 pm", "19:00". A bare number ("7", "4
-# people") is deliberately NOT treated as a time — too ambiguous to enforce on.
-_TIME_TOKEN = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?", re.I)
-
-
-def _parse_time_tokens(text: str) -> set[str]:
-    """Extract explicit clock times from text as `HH:MM` (24h).
-
-    Only tokens with am/pm or a colon count. For a colon time without am/pm (e.g.
-    "7:30"), both the 24h and the PM reading are emitted so the caller can keep
-    whichever is a real slot.
-    """
-    out: set[str] = set()
-    for m in _TIME_TOKEN.finditer(text or ""):
-        hour = int(m.group(1))
-        minute = int(m.group(2)) if m.group(2) else 0
-        has_colon = m.group(2) is not None
-        ampm = (m.group(3) or "").lower().replace(".", "")
-        if not ampm and not has_colon:
-            continue  # bare number — ambiguous, skip
-        if minute > 59:
-            continue
-        if ampm:
-            h = hour % 12 + (12 if ampm == "pm" else 0)
-            if 0 <= h <= 23:
-                out.add(f"{h:02d}:{minute:02d}")
-        else:  # colon, no am/pm: keep both readings, slot-matching disambiguates
-            if 0 <= hour <= 23:
-                out.add(f"{hour:02d}:{minute:02d}")
-            if hour < 12:
-                out.add(f"{hour + 12:02d}:{minute:02d}")
-    return out
+# Reading a written time is now governance's job — the same parser has to serve
+# the booking guard here and the grounding check on the way out, and two copies
+# that drifted would let a claim pass one and fail the other. The name stays for
+# the callers below.
+_parse_time_tokens = grounding.clock_times
 
 
 def _requested_times(session: ConciergeSession) -> set[str]:
@@ -974,6 +957,9 @@ def _handle_times(session: ConciergeSession, args: dict[str, Any]) -> str:
     avail = check_availability(place_id, iso, party_size)
     slots = avail.get("available_slots", [])
     session.availability = {"place_id": place_id, "date": iso, "party_size": party_size, "slots": slots}
+    # What we have actually offered, for the grounding check on the way out.
+    session.offered_times.update(slots)
+    session.offered_dates.add(iso)
     # Working memory for the outing being planned.
     session.pending.update({"place_id": place_id, "restaurant": rec["name"],
                             "date": iso, "party_size": party_size})
@@ -1139,6 +1125,7 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
         fresh = check_availability(place_id, iso, party_size).get("available_slots", [])
         session.availability = {"place_id": place_id, "date": iso,
                                 "party_size": party_size, "slots": fresh}
+        session.offered_times.update(fresh)
         stands = (f"NOT booked — nothing is reserved. {time} is no longer available "
                   f"for {party_size} on {iso}. Tell the guest both parts plainly: no "
                   "reservation was made, and that time has gone.")
@@ -1410,6 +1397,15 @@ def _working_memory(session: ConciergeSession) -> dict[str, Any]:
     return {k: v for k, v in known.items() if v}
 
 
+def _outcome_of(result: str) -> str:
+    """The handler's own status word, for the trail. Handlers all return JSON."""
+    try:
+        payload = json.loads(result)
+    except (ValueError, TypeError):
+        return "unparsed"
+    return payload.get("status", "ok") if isinstance(payload, dict) else "ok"
+
+
 def _dispatch(session: ConciergeSession, name: str, args: dict[str, Any]) -> str:
     """Hand one tool call to the unit that owns it, and run it under that unit's grant.
 
@@ -1432,6 +1428,18 @@ def _dispatch(session: ConciergeSession, name: str, args: dict[str, Any]) -> str
         raise
     except Exception as exc:  # keep the chat alive if a tool trips
         return f"Tool '{name}' failed: {exc}"
+
+    # The trail wants the same thing the grant check wanted, and this is already
+    # the one place that knows it: which unit acted, on what, and how it went.
+    # Arguments are recorded, results are not — a result can be long, and what
+    # governance needs to answer is what was *asked for* by whom.
+    session.trail.record(
+        "tool_call",
+        actor=roster.unit_for_handler(name),
+        tool=name,
+        args=args,
+        outcome=_outcome_of(result),
+    )
 
     known = _working_memory(session)
     if not known:
@@ -1467,14 +1475,29 @@ def _run_turn(session: ConciergeSession, llm: Any) -> str:
             response: AIMessage = llm.invoke(session.messages)
             session.messages.append(response)
             if not response.tool_calls:
-                return (response.content or "").strip()
+                return _vetted(session, response.content or "")
             for call in response.tool_calls:
                 result = _dispatch(session, call["name"], call.get("args") or {})
                 session.messages.append(ToolMessage(content=result, tool_call_id=call["id"]))
         session.messages.append(HumanMessage(content=_NO_MORE_TOOLS))
         final: AIMessage = llm.invoke(session.messages)
         session.messages.append(final)
-        return (final.content or "").strip()
+        return _vetted(session, final.content or "")
+
+
+def _vetted(session: ConciergeSession, reply: str) -> str:
+    """The last thing between the model and the guest.
+
+    Every refusal in this file guards an *action* — a booking that names a
+    restaurant nobody surfaced, at a time nobody offered. None of them guard the
+    sentence. This does: a time, date, confirmation id or email in the reply that
+    no tool ever returned is removed before the guest reads it, and recorded
+    either way, so the trail says what was checked and not merely what was sent.
+    """
+    verdict = grounding.check(reply.strip(), grounding.GroundedFacts.gather(session))
+    if not verdict.grounded:
+        session.trail.record("grounding", actor="dino", **verdict.as_audit())
+    return verdict.reply
 
 
 def start_session(member_id: str) -> ConciergeSession:

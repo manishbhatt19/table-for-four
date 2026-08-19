@@ -73,6 +73,15 @@ one awkward, that's a signal to stop, not to route around it.
 8. **Editing `roster/dino.md` breaks the golden test, on purpose.** Prompt changes
    are fine; they just have to be deliberate and land in their own commit, with
    `tests/golden/dino_system_prompt.txt` regenerated in the same one.
+9. **Nothing books without a human saying yes.** `gate_node` interrupts and the
+   run genuinely stops; only an explicit approval resumes it. `run_concierge`
+   has no default that books — no approver means declined. A convenient default
+   would quietly undo the gate, so there isn't one.
+10. **The reply is checked, not just the action.** `_vetted` runs every reply
+    through `governance.grounding` before the guest sees it: a time, date,
+    confirmation id or email no tool returned is removed and recorded. It is
+    deterministic on purpose — a claim with an exact answer is checked, never
+    estimated by a second model.
 
 ## Conventions
 
@@ -111,5 +120,18 @@ plus the week 4 harness: `agent/roster/` — five declared units, enforced grant
 `docs/week4_tree_of_thought.md` is the reasoned decision *against* tree search and
 stays a decision, not a build.
 
-**M4 is next: the human gate + governance/audit trail.** `gate_node` still
-auto-approves; the `actors` field is the seam the governance trail hangs off.
+**M4 shipped** — `src/table_for_four/governance/`:
+
+- `gate_node` interrupts for real (LangGraph `interrupt` + checkpointer). Only an
+  explicit yes resumes it; no approver, a malformed resume, or EOF all decline.
+  The CLI asks the person at the keyboard; `--yes` is for unattended runs.
+- `audit.py` — append-only records (`event`, `actor`, `member_id`, `at`), held on
+  the session and on graph state, optionally mirrored to `$TF4_AUDIT_LOG` as JSONL.
+  Every chat tool call is recorded with the unit that ran it.
+- `grounding.py` — the reply check. Covers times, ISO dates, confirmation ids and
+  emails. **Does not cover dish or restaurant names, or phone numbers** — those
+  need entity extraction or a judgement, and the module says so rather than
+  implying full coverage. The Streamlit sidebar shows the trail live.
+
+Still open: reconciling the ledger with profile memory, and the M4 writeup in
+`docs/`.

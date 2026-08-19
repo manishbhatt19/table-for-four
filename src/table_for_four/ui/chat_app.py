@@ -198,6 +198,45 @@ def _render_media(items: list[dict[str, Any]]) -> None:
             st.caption(f"📸 {item.get('restaurant', 'Restaurant')} · {label}")
 
 
+def _render_trail(session: ConciergeSession) -> None:
+    """The governance trail, where the guest's own journey can be checked against it.
+
+    Worth showing rather than only writing to a log: the claim this project makes
+    is that every action has a named actor and every reply was checked, and a
+    panel that fills in as the conversation runs is that claim being demonstrated
+    instead of asserted.
+    """
+    records = session.trail.records
+    if not records:
+        return
+    stripped = [r for r in records if r.event == "grounding"]
+    label = f"🧾 Governance trail ({len(records)})"
+    if stripped:
+        label += " · ⚠️"
+    with st.expander(label, expanded=False):
+        if stripped:
+            st.caption(
+                f"{len(stripped)} reply(s) had a claim no tool result supported. "
+                "The sentence was removed before it reached the chat."
+            )
+        for record in reversed(records[-25:]):
+            when = record.at[11:19]  # HH:MM:SS is enough at this scale
+            if record.event == "tool_call":
+                st.markdown(
+                    f"`{when}` **{record.actor}** · {record.detail.get('tool')} "
+                    f"→ _{record.detail.get('outcome')}_"
+                )
+            elif record.event == "grounding":
+                kinds = ", ".join(
+                    f["kind"] for f in record.detail.get("findings", [])
+                ) or "—"
+                st.markdown(f"`{when}` ⚠️ **ungrounded** ({kinds}) — sentence removed")
+                for gone in record.detail.get("removed", []):
+                    st.caption(f"↳ {_shorten(gone, 120)}")
+            else:
+                st.markdown(f"`{when}` {record.event}")
+
+
 def _shorten(text: str, limit: int = 90) -> str:
     text = (text or "").strip()
     return text if len(text) <= limit else text[: limit - 1] + "…"
@@ -304,6 +343,7 @@ def main() -> None:
         else:
             _render_profile(st.session_state.session.profile)
             _render_reservations(st.session_state.session)
+            _render_trail(st.session_state.session)
             st.divider()
             if st.button("End session / new guest", use_container_width=True):
                 for k in ("session", "display"):

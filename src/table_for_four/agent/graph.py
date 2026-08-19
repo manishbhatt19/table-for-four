@@ -23,8 +23,10 @@ from typing import Any, Literal
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command, interrupt
 
 from table_for_four.agent import reasoning, roster
+from table_for_four.governance import audit
 from table_for_four.agent.config import get_llm
 from table_for_four.agent.state import ConciergeState
 from table_for_four.agent.tools import check_availability, create_booking, find_perks, search_restaurants
@@ -34,6 +36,35 @@ MAX_ITERATIONS = 2  # refine-retry guard so the loop can never spin
 
 def _log(state: ConciergeState, msg: str) -> list[str]:
     return list(state.get("log", [])) + [msg]
+
+
+def _audit(state: ConciergeState, event: str, *, actor: str | None, **detail: Any) -> list[dict[str, Any]]:
+    """Append one governance record to the run's trail, never rewriting an earlier one."""
+    return list(state.get("audit", [])) + [
+        audit.emit(event, actor=actor, member_id=state.get("guest_name"), **detail)
+    ]
+
+
+# What counts as a yes. Deliberately narrow and deliberately explicit: anything
+# this doesn't recognise is a refusal, so a malformed resume can't book a table.
+_YES = {"y", "yes", "approve", "approved", "confirm", "confirmed", "ok", "book it", "true"}
+
+
+def _is_approval(decision: Any) -> bool:
+    if isinstance(decision, bool):
+        return decision
+    if isinstance(decision, str):
+        return decision.strip().lower() in _YES
+    if isinstance(decision, dict):
+        if isinstance(decision.get("approved"), bool):
+            return decision["approved"]
+        return _is_approval(decision.get("decision"))
+    return False
+
+
+def _describe(decision: Any) -> Any:
+    """A record of what the human actually sent, kept JSON-shaped for the trail."""
+    return decision if isinstance(decision, (bool, str, int, float, type(None))) else str(decision)
 
 
 def _acted(state: ConciergeState, unit: str) -> list[str]:
@@ -181,12 +212,51 @@ def propose_node(state: ConciergeState) -> dict[str, Any]:
 
 
 def gate_node(state: ConciergeState) -> dict[str, Any]:
-    # M3 placeholder: auto-approve. M4 replaces this with a real human interrupt
-    # and records the approval in the governance/audit trail.
+    """Stop, show a person what is about to happen, and wait to be told.
+
+    This is the milestone. Everything before it is reversible — a search, a
+    shortlist, a proposal — and `create_booking` is the one step that isn't, so
+    it is the one step the agent may not take on its own say-so. The node
+    interrupts: LangGraph checkpoints the state and the run genuinely stops here
+    until a caller resumes it with a decision.
+
+    Two properties worth stating, because they are what make this a gate rather
+    than a prompt. The model is not asked and cannot answer — the decision
+    arrives from outside the graph. And a resume that isn't clearly a yes is a
+    no: silence, an empty resume, anything unparsed all deny, because the safe
+    direction to be wrong in is the one where no table gets booked.
+    """
     proposal = state.get("proposal")
-    approved = bool(proposal and proposal.get("time"))
-    msg = "auto-approved (M3 placeholder for human gate)" if approved else "nothing to approve"
-    return {"approved": approved, "log": _log(state, f"[gate] {msg}")}
+    if not proposal or not proposal.get("time"):
+        return {
+            "approved": False,
+            "log": _log(state, "[gate] nothing to approve"),
+            "audit": _audit(state, "approval", actor=None,
+                            outcome="nothing_to_approve"),
+        }
+
+    chosen = state.get("chosen") or {}
+    perk = (chosen.get("perk") or {})
+    request = {
+        "question": "Confirm this reservation?",
+        "restaurant": proposal.get("restaurant_name"),
+        "date": proposal.get("date"),
+        "time": proposal.get("time"),
+        "party_size": proposal.get("party_size"),
+        "guest_name": proposal.get("guest_name"),
+        "perk": perk.get("title") or perk.get("perk_id"),
+        "irreversible": True,
+    }
+    decision = interrupt(request)
+    approved = _is_approval(decision)
+
+    return {
+        "approved": approved,
+        "approval": {"shown": request, "decision": decision, "approved": approved},
+        "log": _log(state, f"[gate] {'approved' if approved else 'declined'} by human"),
+        "audit": _audit(state, "approval", actor=None, shown=request,
+                        decision=_describe(decision), approved=approved),
+    }
 
 
 def route_after_gate(state: ConciergeState) -> Literal["book", "end"]:
@@ -216,7 +286,7 @@ def book_node(state: ConciergeState) -> dict[str, Any]:
 
 
 def audit_node(state: ConciergeState) -> dict[str, Any]:
-    # M3: lightweight audit line. M4: full structured governance trail.
+    """Close the run with a record of what happened and who is answerable for it."""
     booking = state.get("booking") or {}
     chosen = state.get("chosen") or {}
     summary = {
@@ -230,8 +300,14 @@ def audit_node(state: ConciergeState) -> dict[str, Any]:
         # Who acted, not just what happened. An audit line that cannot name the
         # actor is a diary; this is the field M4's governance trail is built on.
         "actors": state.get("actors", []),
+        # A booking with no approval behind it is the thing this trail exists to
+        # make impossible to miss, so it is stated rather than inferred.
+        "approved_by_human": bool((state.get("approval") or {}).get("approved")),
     }
-    return {"log": _log(state, f"[audit] {json.dumps(summary)}")}
+    return {
+        "log": _log(state, f"[audit] {json.dumps(summary)}"),
+        "audit": _audit(state, "run_complete", actor=None, **summary),
+    }
 
 
 # --- Graph -------------------------------------------------------------------
@@ -278,11 +354,23 @@ def run_concierge(
     guest_name: str = "Guest",
     thread_id: str = "demo",
     use_llm: bool | None = None,
+    approve: Any = None,
 ) -> ConciergeState:
     """Run the full concierge loop for one request and return the final state.
 
     `use_llm=False` forces the deterministic heuristic path (used by tests);
     `None` auto-selects the LLM when a key is configured.
+
+    `approve` answers the human gate, and there is no default that books:
+
+    * a callable — handed the proposal, returns the decision (the CLI passes one
+      that asks the person at the keyboard);
+    * `True` / `False` — a standing answer, for tests and unattended runs;
+    * `None` — nobody is there to ask, so the booking is declined and the trail
+      records that it was never approved rather than that it was refused.
+
+    Leaving this out cannot silently book a table. That is the entire point of
+    the gate, and a convenient default would quietly undo it.
     """
     graph = build_graph()
     config = {"configurable": {"thread_id": thread_id}}
@@ -291,5 +379,16 @@ def run_concierge(
         "guest_name": guest_name,
         "use_llm": use_llm,
         "log": [],
+        "audit": [],
     }
-    return graph.invoke(initial, config)
+    state = graph.invoke(initial, config)
+
+    # The gate genuinely stops the run. Resume it with whatever the caller's
+    # approver says — looping because a graph may interrupt more than once.
+    while (pending := state.get("__interrupt__")):
+        payload = getattr(pending[0], "value", {})
+        decision = approve(payload) if callable(approve) else approve
+        # A bare `None` cannot be resumed on — LangGraph raises inside its own
+        # loop — and "nobody answered" is a refusal in any case, so say so.
+        state = graph.invoke(Command(resume=False if decision is None else decision), config)
+    return state
