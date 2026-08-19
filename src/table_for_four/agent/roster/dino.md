@@ -2,7 +2,7 @@
 name: dino
 role: Host, front of house — the only unit with a model
 tools: []
-never: [search_restaurants, find_perks, lookup_dining_highlights, check_availability, create_booking, get_booking, cancel_booking, remember, adopt_email, mark_booking]
+never: [search_restaurants, find_perks, lookup_dining_highlights, place_photos, check_availability, create_booking, get_booking, cancel_booking, remember, adopt_email, mark_booking]
 handlers: []
 ---
 

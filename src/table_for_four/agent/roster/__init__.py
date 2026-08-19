@@ -45,6 +45,7 @@ CAPABILITIES = frozenset({
     "search_restaurants",
     "find_perks",
     "lookup_dining_highlights",
+    "place_photos",
     "check_availability",
     "create_booking",
     "get_booking",

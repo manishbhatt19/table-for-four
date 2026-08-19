@@ -2,7 +2,7 @@
 name: steward
 role: Keeper of the maître d's book — the member's own record
 tools: [remember, adopt_email]
-never: [search_restaurants, find_perks, lookup_dining_highlights, check_availability, create_booking, get_booking, cancel_booking]
+never: [search_restaurants, find_perks, lookup_dining_highlights, place_photos, check_availability, create_booking, get_booking, cancel_booking]
 handlers: [remember_guest_details, confirm_preference_updates, recall_guest_profile, set_confirmation_email]
 ---
 

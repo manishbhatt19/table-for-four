@@ -2,7 +2,7 @@
 name: booker
 role: The pass — the only unit that commits the guest to anything
 tools: [create_booking, cancel_booking, mark_booking, remember]
-never: [search_restaurants, find_perks, lookup_dining_highlights, check_availability, get_booking, adopt_email]
+never: [search_restaurants, find_perks, lookup_dining_highlights, place_photos, check_availability, get_booking, adopt_email]
 handlers: [book_table, cancel_reservation]
 ---
 

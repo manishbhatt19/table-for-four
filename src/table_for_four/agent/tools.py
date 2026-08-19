@@ -24,7 +24,10 @@ from table_for_four.mcp_servers.booking.server import (
     get_booking as _get_booking,
 )
 from table_for_four.mcp_servers.perks.server import find_perks as _find_perks
-from table_for_four.mcp_servers.search.server import search_restaurants as _search_restaurants
+from table_for_four.mcp_servers.search.server import (
+    place_photos as _place_photos,
+    search_restaurants as _search_restaurants,
+)
 from table_for_four.mcp_servers.web.server import (
     lookup_dining_highlights as _lookup_dining_highlights,
 )
@@ -32,6 +35,7 @@ from table_for_four.mcp_servers.web.server import (
 search_restaurants = roster.brokered("search_restaurants", _search_restaurants)
 find_perks = roster.brokered("find_perks", _find_perks)
 lookup_dining_highlights = roster.brokered("lookup_dining_highlights", _lookup_dining_highlights)
+place_photos = roster.brokered("place_photos", _place_photos)
 check_availability = roster.brokered("check_availability", _check_availability)
 create_booking = roster.brokered("create_booking", _create_booking)
 get_booking = roster.brokered("get_booking", _get_booking)
@@ -42,6 +46,7 @@ TOOLS = {
     "search_restaurants": search_restaurants,
     "find_perks": find_perks,
     "lookup_dining_highlights": lookup_dining_highlights,
+    "place_photos": place_photos,
     "check_availability": check_availability,
     "create_booking": create_booking,
     "get_booking": get_booking,
@@ -53,6 +58,7 @@ __all__ = [
     "search_restaurants",
     "find_perks",
     "lookup_dining_highlights",
+    "place_photos",
     "check_availability",
     "create_booking",
     "get_booking",

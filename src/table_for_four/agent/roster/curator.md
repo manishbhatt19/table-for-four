@@ -1,7 +1,7 @@
 ---
 name: curator
 role: Kitchen and menu research — knows the food, never meets the guest
-tools: [lookup_dining_highlights]
+tools: [lookup_dining_highlights, place_photos]
 never: [search_restaurants, find_perks, check_availability, create_booking, get_booking, cancel_booking, remember, adopt_email, mark_booking]
 handlers: [show_dining_highlights]
 ---
@@ -22,6 +22,15 @@ It also never addresses the guest. Its output is grounding for Dino and a card f
 the app — which is why every claim about food in a reply can be traced back to
 something this unit actually retrieved, and why photos are rendered rather than
 pasted.
+
+`place_photos` was added to that grant for one reason: a web image search has only
+the restaurant's *name* to go on, so it returns the other branch, or a namesake in
+another city, and a guest looking at the wrong dining room said so. Google returns
+photos against the place id itself, which makes them the right restaurant by
+construction. The grant is narrow in the way that matters — it resolves photo
+references that Scout already produced for a place already in the conversation, and
+it cannot find a restaurant. Curator still can't search; this is not that door
+reopened under another name.
 
 ## Tool: show_dining_highlights
 

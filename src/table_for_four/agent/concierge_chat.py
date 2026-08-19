@@ -57,12 +57,14 @@ from table_for_four.agent.tools import (
     create_booking,
     find_perks,
     lookup_dining_highlights,
+    place_photos,
     search_restaurants,
 )
 
 MAX_TOOL_HOPS = 6  # guard: bound tool-call chaining within a single guest turn
 MAX_RECOMMENDATIONS = 4
 CANCELLATION_WINDOW_HOURS = 24  # cancel allowed only more than this far ahead
+MAX_MEDIA_IMAGES = 3  # a photo strip, not a gallery — matches the web server's cap
 
 
 # --- Persona & guardrails ----------------------------------------------------
@@ -729,7 +731,10 @@ def _shortlist(
             "perk_id": (perk or {}).get("perk_id"),
         }
         recs.append(rec)
-        session.recommendations[c["place_id"]] = rec
+        # Photo handles are kept on the session copy only. They're long opaque
+        # strings the model has no use for — it never sees an image — and four
+        # restaurants' worth would cost real tokens on every shortlist.
+        session.recommendations[c["place_id"]] = {**rec, "photos": c.get("photos") or []}
     return recs
 
 
@@ -1126,9 +1131,29 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
         guest_email=profile.get("email"),
     )
     if not booking.get("booked"):
+        # A refusal at the pass is the moment a guest most needs to be told where
+        # they stand, and "Booking failed; offer an alternate time" left them
+        # guessing whether they had a table. Two things are owed here: that nothing
+        # was reserved, said plainly, and times that are open *now* — re-offering
+        # the list that just failed is what made the retry feel like a loop.
+        fresh = check_availability(place_id, iso, party_size).get("available_slots", [])
+        session.availability = {"place_id": place_id, "date": iso,
+                                "party_size": party_size, "slots": fresh}
+        stands = (f"NOT booked — nothing is reserved. {time} is no longer available "
+                  f"for {party_size} on {iso}. Tell the guest both parts plainly: no "
+                  "reservation was made, and that time has gone.")
         return json.dumps({
-            "status": "failed", "error": booking.get("error"),
-            "message": "Booking failed; offer an alternate time or restaurant.",
+            "status": "not_booked",
+            "error": booking.get("error"),
+            "attempted_time": time,
+            "available_times": fresh,
+            "message": stands + (
+                " Then offer the times in available_times and let them pick another. "
+                "Never imply the table is being held."
+                if fresh else
+                " Nothing else is open there that day, so offer another date or one "
+                "of the other restaurants."
+            ),
         }, ensure_ascii=False)
 
     result = {
@@ -1291,7 +1316,18 @@ def _handle_highlights(session: ConciergeSession, args: dict[str, Any]) -> str:
         focus=focus,
     )
 
-    if not result.get("highlights") and not result.get("images"):
+    # Photos of the restaurant itself go first. Tavily has only the name to search
+    # on, which is how a guest ends up looking at another branch or a namesake in
+    # another city; Places resolves against the place id, so these are the right
+    # restaurant by construction. Web images stay on as the top-up, and offline
+    # this is empty so the placeholder path is untouched.
+    own_photos = place_photos(rec.get("photos"))
+    images = own_photos + [
+        img for img in result.get("images", [])
+        if img.get("url") not in {p["url"] for p in own_photos}
+    ]
+
+    if not result.get("highlights") and not images:
         return json.dumps({
             "status": "nothing_found",
             "restaurant": rec["name"],
@@ -1317,7 +1353,7 @@ def _handle_highlights(session: ConciergeSession, args: dict[str, Any]) -> str:
         "restaurant": rec["name"],
         "focus": focus,
         "card": card,
-        "images": result.get("images", []),
+        "images": images[:MAX_MEDIA_IMAGES],
         "source": result.get("source"),
         "citations": result.get("citations", []),
     })

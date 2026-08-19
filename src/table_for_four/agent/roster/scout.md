@@ -2,7 +2,7 @@
 name: scout
 role: Reservations desk — finds the table, never takes it
 tools: [search_restaurants, find_perks, check_availability]
-never: [create_booking, cancel_booking, remember, adopt_email, mark_booking]
+never: [create_booking, cancel_booking, remember, adopt_email, mark_booking, place_photos]
 handlers: [recommend_restaurants, check_availability_times]
 ---
 

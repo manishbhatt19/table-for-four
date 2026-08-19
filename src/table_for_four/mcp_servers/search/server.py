@@ -28,7 +28,14 @@ load_dotenv()
 
 PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "").strip()
 PLACES_TEXT_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
+PLACES_MEDIA_URL_BASE = "https://places.googleapis.com/v1"
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "places_sample.json"
+
+# Photos come back as references, not images. Resolving one costs a second API
+# call, so a search carries only the handles and `place_photos` spends the calls
+# on the single restaurant a guest actually asked to see.
+MAX_PLACE_PHOTOS = 3
+PHOTO_MAX_WIDTH_PX = 800
 
 # Field mask controls both the response shape AND the billing tier on the live
 # API. We request only what the concierge actually reasons over -- nothing more.
@@ -47,6 +54,10 @@ PLACES_FIELD_MASK = ",".join(
         "location",
         "websiteUri",
         "nationalPhoneNumber",
+        # Photos of the restaurant itself, keyed to its place id. Worth the tier
+        # this pushes the request into: it is the difference between showing a
+        # guest their restaurant and showing them a namesake in another city.
+        "photos",
     )
 )
 
@@ -64,6 +75,25 @@ mcp = FastMCP("restaurant-search")
 
 # --- Normalization (shared by live + fixture paths) --------------------------
 
+def _photo_refs(raw_photos: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Photo handles from a Places result, each with the credit Google requires.
+
+    These photos are largely contributed by diners, and the attribution travels
+    with the reference so whatever displays it can say who took it.
+    """
+    refs: list[dict[str, Any]] = []
+    for photo in (raw_photos or [])[:MAX_PLACE_PHOTOS]:
+        name = photo.get("name")
+        if not name:
+            continue
+        authors = photo.get("authorAttributions") or []
+        refs.append({
+            "ref": name,
+            "attribution": (authors[0].get("displayName") if authors else "") or "",
+        })
+    return refs
+
+
 def _normalize_place(raw: dict[str, Any]) -> dict[str, Any]:
     """Convert a raw Places result into the concierge's clean restaurant shape."""
     return {
@@ -79,7 +109,57 @@ def _normalize_place(raw: dict[str, Any]) -> dict[str, Any]:
         "location": raw.get("location"),
         "website": raw.get("websiteUri"),
         "phone": raw.get("nationalPhoneNumber"),
+        "photos": _photo_refs(raw.get("photos")),
     }
+
+
+def place_photos(
+    photos: list[dict[str, Any]] | None,
+    max_width_px: int = PHOTO_MAX_WIDTH_PX,
+) -> list[dict[str, Any]]:
+    """Resolve Places photo references into displayable image URLs.
+
+    These are the best photos available to us, and for one structural reason:
+    Google returns them against the place id itself, so they are of *this*
+    restaurant by construction. A web image search has to go on the name, which
+    is how a guest ends up looking at the other branch, or at a namesake in
+    another city — the complaint that prompted this.
+
+    `skipHttpRedirect` is the load-bearing parameter. The media endpoint normally
+    302s straight to the image, so handing that URL to a browser would put our
+    API key in an `<img src>` for anyone to read. Asking for JSON instead keeps
+    the key on this side and yields a plain, already-signed image URL.
+
+    Returns [] with no API key, so the offline path just falls through to its
+    placeholders rather than failing.
+    """
+    if not PLACES_API_KEY:
+        return []
+    out: list[dict[str, Any]] = []
+    for photo in photos or []:
+        ref = (photo or {}).get("ref")
+        if not ref:
+            continue
+        try:
+            resp = httpx.get(
+                f"{PLACES_MEDIA_URL_BASE}/{ref}/media",
+                params={"maxWidthPx": max_width_px, "skipHttpRedirect": "true"},
+                headers={"X-Goog-Api-Key": PLACES_API_KEY},
+                timeout=15.0,
+            )
+            resp.raise_for_status()
+            uri = resp.json().get("photoUri")
+        except (httpx.HTTPError, ValueError):
+            continue  # one unavailable photo shouldn't cost the guest their dining tips
+        if not uri:
+            continue
+        credit = (photo or {}).get("attribution")
+        out.append({
+            "url": uri,
+            "description": "Photo from Google Places" + (f", by {credit}" if credit else ""),
+            "source": "google places",
+        })
+    return out
 
 
 # A few cuisines whose Google `type` doesn't literally contain the requested word,

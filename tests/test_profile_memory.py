@@ -479,6 +479,142 @@ def test_a_bigger_party_cannot_book_times_looked_up_for_a_smaller_one(monkeypatc
     assert called["n"] == 0  # the backend 409 never happens; we caught it first
 
 
+def test_the_restaurants_own_photos_come_before_anything_found_by_name(monkeypatch):
+    # Demo feedback: the photos were often of somewhere else. A web image search
+    # has only the name to go on, so it finds the other branch or a namesake;
+    # Places resolves against the place id, so those are this restaurant by
+    # construction. They lead, and web images fill in behind them.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    monkeypatch.setattr(cc, "place_photos",
+                        lambda refs: [{"url": "https://places/own.jpg",
+                                       "description": "Photo from Google Places",
+                                       "source": "google places"}] if refs else [])
+    monkeypatch.setattr(cc, "lookup_dining_highlights", lambda **k: {
+        "source": "live",
+        "highlights": [{"title": "Menu", "snippet": "the tasting menu", "url": "https://x.com/m"}],
+        "images": [{"url": "https://web/maybe-elsewhere.jpg", "description": "?", "source": "web"}],
+        "citations": ["https://x.com/m"],
+    })
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    session.recommendations = {"p1": {
+        "place_id": "p1", "name": "Osteria", "cuisine": "italian",
+        "photos": [{"ref": "places/p1/photos/one", "attribution": "A Diner"}],
+    }}
+
+    _json.loads(cc._handle_highlights(session, {"place_id": "p1"}))
+
+    shown = [i["url"] for i in session.media[-1]["images"]]
+    assert shown[0] == "https://places/own.jpg", "the restaurant's own photo must lead"
+    assert "https://web/maybe-elsewhere.jpg" in shown, "web images still fill in behind"
+
+
+def test_a_restaurant_with_no_places_photos_still_shows_what_the_web_found(monkeypatch):
+    # Offline, and for any place Google has no photo of, nothing changes.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    monkeypatch.setattr(cc, "place_photos", lambda refs: [])
+    monkeypatch.setattr(cc, "lookup_dining_highlights", lambda **k: {
+        "source": "fixture", "highlights": [],
+        "images": [{"url": "data:image/svg+xml;utf8,placeholder", "source": "placeholder"}],
+        "citations": [],
+    })
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    session.recommendations = {"p1": {"place_id": "p1", "name": "Osteria"}}
+
+    out = _json.loads(cc._handle_highlights(session, {"place_id": "p1"}))
+    assert out["status"] != "nothing_found"
+    assert session.media[-1]["images"][0]["source"] == "placeholder"
+
+
+def test_photo_handles_are_kept_off_the_model(monkeypatch):
+    # Long opaque strings the model can't use — it never sees an image — and four
+    # restaurants' worth would cost tokens on every single shortlist.
+    import table_for_four.agent.concierge_chat as cc
+
+    monkeypatch.setattr(cc, "find_perks", lambda **k: {"results": []})
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    recs = cc._shortlist(
+        session,
+        [{"place_id": "p1", "name": "Osteria", "primary_type": "italian_restaurant",
+          "photos": [{"ref": "places/p1/photos/one", "attribution": "A Diner"}]}],
+        "italian", 2, FUTURE_DATE,
+    )
+
+    assert "photos" not in recs[0]                              # not sent to the model
+    assert session.recommendations["p1"]["photos"][0]["ref"] == "places/p1/photos/one"
+
+
+def test_tapping_an_open_time_reads_back_as_the_guest_asking_for_it():
+    # The UI's time chips send the slot as an ordinary guest message rather than
+    # setting state, so the pass can still refuse a booking at a time the guest
+    # never asked for. That only holds if every slot we can offer survives the
+    # round trip through the transcript parser — this is that contract.
+    import table_for_four.agent.concierge_chat as cc
+    from table_for_four.mcp_servers.booking.backend.app import SERVICE_SLOTS
+
+    for slot in SERVICE_SLOTS:
+        assert slot in cc._parse_time_tokens(slot), f"chip {slot} would not parse back"
+
+
+def test_a_refused_booking_says_plainly_that_nothing_was_reserved(monkeypatch):
+    # Demo feedback: during the failed retries the guest couldn't tell whether they
+    # actually had a table. A refusal at the pass owes them two things — that
+    # nothing is reserved, and times that are open *now* rather than the stale list
+    # that just failed.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    monkeypatch.setattr(cc, "create_booking",
+                        lambda **k: {"booked": False, "error": "slot_unavailable"})
+    monkeypatch.setattr(cc, "check_availability",
+                        lambda *a, **k: {"available_slots": ["20:00", "20:30"]})
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    _listed(session)
+    _offered(session, party=2, slots=("19:00",))
+    out = _json.loads(cc._handle_book(session, {
+        "place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 2,
+    }))
+
+    assert out["status"] == "not_booked"
+    assert "NOT booked" in out["message"] and "no reservation was made" in out["message"]
+    assert out["attempted_time"] == "19:00"
+    # Fresh times, not the list that just failed — and the session agrees with them.
+    assert out["available_times"] == ["20:00", "20:30"]
+    assert session.availability["slots"] == ["20:00", "20:30"]
+    assert not session.bookings  # nothing recorded as booked
+
+
+def test_a_refusal_with_nothing_left_that_day_does_not_dangle_a_list(monkeypatch):
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    monkeypatch.setattr(cc, "create_booking",
+                        lambda **k: {"booked": False, "error": "slot_unavailable"})
+    monkeypatch.setattr(cc, "check_availability", lambda *a, **k: {"available_slots": []})
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    _listed(session)
+    _offered(session, party=2, slots=("19:00",))
+    out = _json.loads(cc._handle_book(session, {
+        "place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 2,
+    }))
+
+    assert out["available_times"] == []
+    assert "another date" in out["message"]
+    assert "available_times" not in out["message"]  # nothing to point at
+
+
 def test_every_time_we_offer_a_big_party_can_actually_be_booked(monkeypatch):
     # Not a regression test for the placeholder bug — the two above cover that.
     # This is the standing invariant underneath it, run against the real
