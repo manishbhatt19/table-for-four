@@ -203,6 +203,56 @@ def _shorten(text: str, limit: int = 90) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+# --- Open times, as something you can tap ------------------------------------
+
+# Wide enough to read a clock time, narrow enough that a full service fits on a
+# few rows without the labels truncating.
+CHIPS_PER_ROW = 5
+
+
+def _time_chips(session: ConciergeSession) -> str | None:
+    """Offer the open times as buttons; return the one the guest tapped, if any.
+
+    Deliberately not a shortcut past the conversation. A tap is fed back through
+    exactly the same path as typed text, because the guest's own words are what
+    several guardrails read: `_requested_times` scans the transcript so the pass
+    can refuse a booking at a time they didn't ask for, and a chip that quietly
+    set state instead of speaking would walk straight around it.
+
+    Only what a tool actually returned is ever shown here — these are the slots
+    from the last `check_availability_times`, not a guess at what a restaurant
+    might be able to do.
+    """
+    pend = session.availability or {}
+    slots = pend.get("slots") or []
+    if not slots:
+        return None
+    # Once this outing is on the ledger the times are history, not an offer.
+    if any(k.startswith(f"{pend.get('place_id')}|{pend.get('date')}|")
+           for k in session.bookings):
+        return None
+
+    where = (session.pending.get("restaurant")
+             if session.pending.get("place_id") == pend.get("place_id") else None)
+    st.caption(
+        "🕑 Open times"
+        + (f" at {where}" if where else "")
+        + (f" on {pend['date']}" if pend.get("date") else "")
+        + " — tap one, or just tell Dino."
+    )
+
+    picked = None
+    for start in range(0, len(slots), CHIPS_PER_ROW):
+        # A full-width row every time, so a short last row stays left-aligned
+        # under the one above it rather than stretching to fill.
+        cols = st.columns(CHIPS_PER_ROW)
+        for col, slot in zip(cols, slots[start:start + CHIPS_PER_ROW]):
+            key = f"slot-{pend.get('place_id')}-{pend.get('date')}-{slot}"
+            if col.button(slot, key=key, use_container_width=True):
+                picked = slot
+    return picked
+
+
 # --- Session bootstrap -------------------------------------------------------
 
 def _start(name: str) -> None:
@@ -272,8 +322,9 @@ def main() -> None:
             if msg.get("media"):
                 _render_media(msg["media"])
 
-    # Guest turn.
-    if prompt := st.chat_input("Message Dino…"):
+    # Guest turn — typed, or tapped from the open times.
+    tapped = _time_chips(st.session_state.session)
+    if prompt := (tapped or st.chat_input("Message Dino…")):
         st.session_state.display.append({"role": "user", "content": prompt})
         with st.chat_message("user", avatar="🧑"):
             st.markdown(prompt)
