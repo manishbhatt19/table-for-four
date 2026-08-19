@@ -950,8 +950,22 @@ def _handle_times(session: ConciergeSession, args: dict[str, Any]) -> str:
         return json.dumps({"status": "date_in_past",
                            "message": "That date is in the past. Re-confirm the date with the guest."},
                           ensure_ascii=False)
+    # Open times depend on the party size — the backend seats a party of eight far
+    # more sparsely than a couple — so a placeholder here is not a harmless default.
+    # It showed the guest times they could not actually have: offered for a made-up
+    # two, refused at the pass for the real eight, then offered again from the same
+    # placeholder. That is the loop a guest booking a big table kept hitting, and it
+    # only ever broke when they happened to pick a slot that survived both rules.
+    # Worse, the placeholder was filed in `pending` as though the guest had said it.
     party_size = args.get("party_size") or session.pending.get("party_size") \
-        or (session.profile or {}).get("party_size") or 2
+        or (session.profile or {}).get("party_size")
+    if not isinstance(party_size, int) or party_size < 1:
+        return json.dumps({
+            "status": "need_party_size",
+            "message": "Ask the guest how many people are coming before offering "
+                       "times — which tables are free depends on it. Then call "
+                       "check_availability_times again with party_size.",
+        }, ensure_ascii=False)
     avail = check_availability(place_id, iso, party_size)
     slots = avail.get("available_slots", [])
     session.availability = {"place_id": place_id, "date": iso, "party_size": party_size, "slots": slots}
@@ -1045,6 +1059,19 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
                        "date. Confirm the date with the guest, call "
                        "check_availability_times, show them what came back, and book "
                        "only the time they pick. Never assume a date or a time.",
+        }, ensure_ascii=False)
+    if pend["party_size"] != party_size:
+        # The slot list on file was computed for a different number of people, so it
+        # is not the list this booking may choose from. Catching it here turns what
+        # used to be a bare 409 from the backend — which the model could only retry
+        # blindly — into an instruction it can actually act on.
+        return json.dumps({
+            "status": "party_size_changed",
+            "times_were_for": pend["party_size"],
+            "booking_is_for": party_size,
+            "message": "Those open times were looked up for a different party size. "
+                       "Call check_availability_times again with the real party_size "
+                       "and let the guest pick from what comes back.",
         }, ensure_ascii=False)
     if not pend["slots"]:
         # We did look, and there was nothing. Booking anyway would invent a table.

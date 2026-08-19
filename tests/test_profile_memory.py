@@ -283,12 +283,14 @@ def _listed(session, place_id="p1", name="Osteria", perk_id=None):
     session.recommendations = {place_id: {"place_id": place_id, "name": name, "perk_id": perk_id}}
 
 
-def _offered(session, place_id="p1", day=None, slots=("19:00", "20:00")):
-    # Step 5 of the journey actually happened: the guest gave a date and was shown
-    # the open times for it. A booking test that skips this isn't testing booking —
-    # it's testing the hole where a made-up time got through.
+def _offered(session, place_id="p1", day=None, party=2, slots=("19:00", "20:00")):
+    # Step 5 of the journey actually happened: the guest gave a date and a party
+    # size, and was shown the open times for them. A booking test that skips this
+    # isn't testing booking — it's testing the hole where a made-up time got
+    # through. `party` has to match what the booking asks for: open times are
+    # computed per party size, so a list fetched for a different one is stale.
     session.availability = {"place_id": place_id, "date": day or FUTURE_DATE,
-                            "party_size": 2, "slots": list(slots)}
+                            "party_size": party, "slots": list(slots)}
 
 
 def test_book_is_idempotent_per_request(monkeypatch):
@@ -308,7 +310,7 @@ def test_book_is_idempotent_per_request(monkeypatch):
 
     session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com", "party_size": 4})
     _listed(session)
-    _offered(session)
+    _offered(session, party=4)
     args = {"place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 4}
 
     first = _json.loads(cc._handle_book(session, args))
@@ -437,6 +439,72 @@ def test_book_refuses_when_nothing_was_free(monkeypatch):
     assert called["n"] == 0
 
 
+def test_times_are_never_offered_for_a_guessed_party_size():
+    # Demo feedback, and the loop this guards: which slots are open depends on how
+    # many people are coming — the backend seats a party of eight more sparsely.
+    # Defaulting to two showed the guest times that were then refused at the pass,
+    # and the retry re-offered the same wrong list from the same placeholder.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    _listed(session)
+    out = _json.loads(cc._handle_times(session, {"place_id": "p1", "date": FUTURE_DATE}))
+
+    assert out["status"] == "need_party_size"
+    # And nothing was filed as though the guest had said it.
+    assert "party_size" not in session.pending
+
+
+def test_a_bigger_party_cannot_book_times_looked_up_for_a_smaller_one(monkeypatch):
+    # The other half of the same loop: times fetched for two, booking made for
+    # eight. The slot list on file is stale, so it is not the list to choose from.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    called = {"n": 0}
+    monkeypatch.setattr(cc, "create_booking", lambda **k: called.__setitem__("n", called["n"] + 1) or {})
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    _listed(session)
+    _offered(session, party=2, slots=("19:00", "20:00"))
+    out = _json.loads(cc._handle_book(session, {
+        "place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 8,
+    }))
+
+    assert out["status"] == "party_size_changed"
+    assert (out["times_were_for"], out["booking_is_for"]) == (2, 8)
+    assert called["n"] == 0  # the backend 409 never happens; we caught it first
+
+
+def test_every_time_we_offer_a_big_party_can_actually_be_booked(monkeypatch):
+    # Not a regression test for the placeholder bug — the two above cover that.
+    # This is the standing invariant underneath it, run against the real
+    # availability rules rather than a stub: the list we show and the list the
+    # backend will accept are the same list. It's what would catch a future
+    # party-size rule landing on one side of the pass and not the other.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    _listed(session)
+    session.pending["party_size"] = 8
+
+    times = _json.loads(cc._handle_times(session, {"place_id": "p1", "date": FUTURE_DATE}))
+    assert times["status"] == "ok" and times["available_times"]
+
+    for slot in times["available_times"]:
+        session.bookings.clear()  # each slot judged on its own
+        monkeypatch.setattr(cc.profile_memory, "remember", lambda *a, **k: {"email": "g@x.com"})
+        out = _json.loads(cc._handle_book(session, {
+            "place_id": "p1", "date": FUTURE_DATE, "time": slot, "party_size": 8,
+        }))
+        assert out["status"] == "booked", f"offered {slot} but could not book it: {out}"
+
+
 def test_every_tool_result_restates_what_we_already_know():
     # Guests notice being asked twice. Rather than trusting the model to remember
     # across a long chat, each tool result carries the known facts back to it.
@@ -486,7 +554,7 @@ def test_booking_records_the_cuisine_as_a_recent_preference(monkeypatch):
 
     session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
     session.recommendations = {"p1": {"place_id": "p1", "name": "Osteria", "cuisine": "italian"}}
-    _offered(session)
+    _offered(session, party=4)
     out = _json.loads(cc._handle_book(session, {
         "place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 4,
     }))
@@ -520,7 +588,7 @@ def _booking_session(profile):
     session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com", **profile})
     session.recommendations = {"p1": {"place_id": "p1", "name": "Osteria", "cuisine": "thai"}}
     session.pending["location"] = "Brooklyn"
-    _offered(session)
+    _offered(session, party=6)
     return session
 
 
@@ -961,7 +1029,7 @@ def test_booking_a_generically_typed_place_falls_back_to_the_searched_cuisine(mo
     session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
     session.recommendations = {"p1": {"place_id": "p1", "name": "Corner Table", "cuisine": None}}
     session.pending["cuisine"] = "italian"  # what they searched for
-    _offered(session)
+    _offered(session, party=4)
     args = {"place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 4}
     assert _json.loads(cc._handle_book(session, args))["status"] == "booked"
     assert remembered["cuisines"] == ["italian"]
@@ -1109,6 +1177,7 @@ def test_a_full_restaurant_comes_back_with_similar_places_nearby(monkeypatch):
     session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
     session.recommendations = {"p1": {"place_id": "p1", "name": "Osteria", "cuisine": "italian"}}
     session.pending["location"] = "Soho"
+    session.pending["party_size"] = 2  # step 3 happened; times need it
 
     out = _json.loads(cc._handle_times(session, {"place_id": "p1", "date": FUTURE_DATE}))
 
@@ -1136,6 +1205,7 @@ def test_no_similar_places_offered_when_there_is_nothing_to_be_similar_to(monkey
 
     session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
     session.recommendations = {"p1": {"place_id": "p1", "name": "Osteria", "cuisine": None}}
+    session.pending["party_size"] = 2  # step 3 happened; times need it
 
     out = _json.loads(cc._handle_times(session, {"place_id": "p1", "date": FUTURE_DATE}))
 
