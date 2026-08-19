@@ -11,7 +11,9 @@
 A note on the word, because the repo uses it twice. **This** harness is the
 development-time one: how Claude Code is configured to work on the project.
 `docs/week4_agentic_harness.md` describes a different thing — a roster of declared
-units *inside* the product, at runtime — and is still unbuilt.
+units *inside* the product, at runtime — which has since shipped as
+`src/table_for_four/agent/roster/`: five units, each a `.md` declaring what it may
+touch, enforced at the tool registry.
 
 ---
 
@@ -34,9 +36,9 @@ grepping: the `uv` commands, where each thing lives, and the conventions the
 codebase actually follows (comments explain *why* in prose; tests are named as
 behaviour and open with the bug they guard; docs are weekly submissions).
 
-Its centre is the six **invariants** — stated as the product rather than as
-preferences, so a change that makes one awkward reads as a signal to stop rather
-than something to route around:
+Its centre is the **invariants** — eight of them as the file stands, stated as the
+product rather than as preferences, so a change that makes one awkward reads as a
+signal to stop rather than something to route around:
 
 1. The model never invents — not a restaurant, time, email, dish, or confirmation id.
 2. The guest chooses at every branch point.
@@ -45,6 +47,13 @@ than something to route around:
 5. Dining only — the scope guardrail is load-bearing.
 6. The backend owns policy, not the model — the 24 hour cancellation window is
    enforced in FastAPI, and Dino relays refusals verbatim.
+7. A unit only touches what its roster entry grants — widening one means editing
+   the `.md` and saying why, never adding a call and letting it through.
+8. Editing `roster/dino.md` breaks the golden test, on purpose — prompt changes are
+   fine, they just land in their own commit with the golden regenerated in it.
+
+The last two arrived with the runtime roster, after this configuration was
+committed; the file they live in is a working document, not a snapshot.
 
 It also carries the gotchas that are expensive to learn twice: `_run_turn` is the
 only place the chat path calls a model and should stay that way; module paths are
@@ -57,8 +66,9 @@ Each is a markdown file whose frontmatter declares `tools:` and `model:`. The gr
 is the point: the two auditors cannot edit anything, by configuration rather than by
 instruction.
 
-**`concierge-consistency`** (`Read, Grep, Glob` — sonnet). `concierge_chat.py` holds
-three descriptions of the same behaviour — the `SYSTEM_PROMPT` journey, the
+**`concierge-consistency`** (`Read, Grep, Glob` — sonnet). Three descriptions of the
+same behaviour have to agree — the journey in `roster/dino.md` (it was a
+`SYSTEM_PROMPT` literal in `concierge_chat.py` when this agent was written), the
 `TOOL_SCHEMAS` the model can call, and the `_handle_*` functions that run. Nothing
 in the code enforces agreement between them, so a tool renamed in one place, a
 handler status the prompt never mentions, or a schema parameter the handler doesn't
