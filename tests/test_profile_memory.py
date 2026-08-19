@@ -500,10 +500,8 @@ def test_the_restaurants_own_photos_come_before_anything_found_by_name(monkeypat
     })
 
     session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
-    session.recommendations = {"p1": {
-        "place_id": "p1", "name": "Osteria", "cuisine": "italian",
-        "photos": [{"ref": "places/p1/photos/one", "attribution": "A Diner"}],
-    }}
+    session.recommendations = {"p1": {"place_id": "p1", "name": "Osteria", "cuisine": "italian"}}
+    session.photo_refs["p1"] = [{"ref": "places/p1/photos/one", "attribution": "A Diner"}]
 
     _json.loads(cc._handle_highlights(session, {"place_id": "p1"}))
 
@@ -533,6 +531,112 @@ def test_a_restaurant_with_no_places_photos_still_shows_what_the_web_found(monke
     assert session.media[-1]["images"][0]["source"] == "placeholder"
 
 
+def test_a_time_the_guest_already_asked_for_is_not_put_back_to_them(monkeypatch):
+    # Demo feedback: the guest says "7pm", it's free, and Dino reads the whole
+    # list back and asks them to choose. They already chose. Asking again is the
+    # same failure as offering a shortlist to someone who named the restaurant.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+    from langchain_core.messages import HumanMessage
+
+    monkeypatch.setattr(cc, "check_availability",
+                        lambda *a, **k: {"available_slots": ["18:00", "19:00", "20:00"]})
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    _listed(session)
+    session.pending["party_size"] = 2
+    session.messages = [HumanMessage(content="7pm would be perfect")]
+
+    out = _json.loads(cc._handle_times(session, {"place_id": "p1", "date": FUTURE_DATE}))
+
+    assert out["guest_already_chose"] == "19:00"
+    assert "Do NOT read the other times back" in out["instruction"]
+    assert "photos" in out["instruction"]  # spend the spare question on something useful
+
+
+def test_the_times_are_still_offered_when_the_guest_named_none(monkeypatch):
+    # The normal path must be untouched: no stated time, so they get the list.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+    from langchain_core.messages import HumanMessage
+
+    monkeypatch.setattr(cc, "check_availability",
+                        lambda *a, **k: {"available_slots": ["18:00", "19:00"]})
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    _listed(session)
+    session.pending["party_size"] = 2
+    session.messages = [HumanMessage(content="somewhere nice for dinner")]
+
+    out = _json.loads(cc._handle_times(session, {"place_id": "p1", "date": FUTURE_DATE}))
+
+    assert "guest_already_chose" not in out
+    assert out["available_times"] == ["18:00", "19:00"]
+
+
+def test_a_requested_time_that_is_full_still_gets_the_list(monkeypatch):
+    # They asked for 7pm and it's gone — that is exactly when they do need to see
+    # what's left, so the shortcut must not fire.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+    from langchain_core.messages import HumanMessage
+
+    monkeypatch.setattr(cc, "check_availability",
+                        lambda *a, **k: {"available_slots": ["12:00", "20:30"]})
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    _listed(session)
+    session.pending["party_size"] = 2
+    session.messages = [HumanMessage(content="7pm please")]
+
+    out = _json.loads(cc._handle_times(session, {"place_id": "p1", "date": FUTURE_DATE}))
+
+    assert "guest_already_chose" not in out
+    assert out["available_times"] == ["12:00", "20:30"]
+
+
+def test_a_sample_perk_survives_all_the_way_to_the_confirmation(monkeypatch):
+    # Demo feedback, and the bug this guards: the booking stopped mentioning the
+    # perk. Live Google ids can't match our synthetic perks, so a sample offer is
+    # attached to the shortlist *after* it is built — by editing the rec. Storing
+    # a copy of that rec against the session quietly dropped the edit, so by
+    # booking time the perk was gone and the guest was never told they'd used it.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    monkeypatch.setattr(cc, "search_restaurants", lambda **k: {"source": "live", "results": [
+        {"place_id": "live-1", "name": "Sakura Omakase", "primary_type": "japanese_restaurant"},
+    ]})
+    # No perk matches the live id (the real-world case)...
+    monkeypatch.setattr(cc, "find_perks", lambda **k: {"results": [] if k.get("place_ids") else [
+        {"perk_id": "sample-1", "title": "Complimentary sake pairing"},
+    ]})
+    monkeypatch.setattr(cc, "create_booking",
+                        lambda **k: {"booked": True, "confirmation_id": "TF4-0001", "booking": {}})
+    monkeypatch.setattr(cc.profile_memory, "remember", lambda *a, **k: {"email": "g@x.com"})
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    session.asked_returning = True
+    out = _json.loads(cc._handle_recommend(session, {"cuisine": "japanese", "party_size": 2}))
+    assert out["recommendations"][0]["perk_title"] == "Complimentary sake pairing"
+
+    # ...and the session must agree with what the guest was shown.
+    assert session.recommendations["live-1"]["perk_title"] == "Complimentary sake pairing"
+
+    _offered(session, place_id="live-1", party=2)
+    booked = _json.loads(cc._handle_book(session, {
+        "place_id": "live-1", "date": FUTURE_DATE, "time": "19:00", "party_size": 2,
+    }))
+
+    assert booked["status"] == "booked"
+    assert booked["perk_applied"] == "Complimentary sake pairing"
+    assert booked["perk_sample"] is True
+
+
 def test_photo_handles_are_kept_off_the_model(monkeypatch):
     # Long opaque strings the model can't use — it never sees an image — and four
     # restaurants' worth would cost tokens on every single shortlist.
@@ -549,7 +653,10 @@ def test_photo_handles_are_kept_off_the_model(monkeypatch):
     )
 
     assert "photos" not in recs[0]                              # not sent to the model
-    assert session.recommendations["p1"]["photos"][0]["ref"] == "places/p1/photos/one"
+    # Kept beside the rec, not inside a copy of it — a copy dropped the sample
+    # perk that gets attached after the shortlist is built.
+    assert session.photo_refs["p1"][0]["ref"] == "places/p1/photos/one"
+    assert session.recommendations["p1"] is recs[0]
 
 
 def test_tapping_an_open_time_reads_back_as_the_guest_asking_for_it():

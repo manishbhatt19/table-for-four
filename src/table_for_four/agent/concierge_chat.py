@@ -287,6 +287,7 @@ class ConciergeSession:
     profile: dict[str, Any] | None = None
     messages: list[Any] = field(default_factory=list)
     recommendations: dict[str, Any] = field(default_factory=dict)   # place_id -> rec
+    photo_refs: dict[str, list] = field(default_factory=dict)       # place_id -> Places photo handles
     availability: dict[str, Any] | None = None                      # last times shown
     bookings: dict[str, Any] = field(default_factory=dict)          # key -> result (idempotency)
     pending: dict[str, Any] = field(default_factory=dict)           # outing being planned
@@ -714,10 +715,14 @@ def _shortlist(
             "perk_id": (perk or {}).get("perk_id"),
         }
         recs.append(rec)
-        # Photo handles are kept on the session copy only. They're long opaque
-        # strings the model has no use for — it never sees an image — and four
-        # restaurants' worth would cost real tokens on every shortlist.
-        session.recommendations[c["place_id"]] = {**rec, "photos": c.get("photos") or []}
+        session.recommendations[c["place_id"]] = rec
+        # Photo handles live in their own map rather than on the rec. They are long
+        # opaque strings the model has no use for — it never sees an image — and
+        # four restaurants' worth would cost tokens on every shortlist. Keeping
+        # them beside it rather than in a copy of it matters: callers finish the
+        # rec after this returns (sample perks are attached that way), and a copy
+        # silently dropped those edits.
+        session.photo_refs[c["place_id"]] = c.get("photos") or []
     return recs
 
 
@@ -988,12 +993,28 @@ def _handle_times(session: ConciergeSession, args: dict[str, Any]) -> str:
                 "at the same restaurant, or ask whether to widen the area."
             )
         return json.dumps(payload, ensure_ascii=False)
-    return json.dumps({
+    payload = {
         "status": "ok", "restaurant": rec["name"], "date": iso, "available_times": slots,
         "remembered": {"restaurant": rec["name"], "date": iso, "party_size": party_size},
         "reminder": "Book the exact time the guest picks from available_times; keep "
                     "this date and party size.",
-    }, ensure_ascii=False)
+    }
+    # If the guest already named a time and it's free, they have chosen. Reading
+    # the whole list back and asking them to choose again reads as not having
+    # listened — the same failure as offering a shortlist to someone who already
+    # named the restaurant. Confirm it, and spend the question on something they
+    # might actually want.
+    already_asked = sorted(_requested_times(session) & set(slots))
+    if already_asked:
+        payload["guest_already_chose"] = already_asked[0]
+        payload["instruction"] = (
+            f"The guest asked for {already_asked[0]} and it is free. Do NOT read the "
+            "other times back or ask them to pick again — confirm that time, read the "
+            "booking details back for a yes, and use the spare question to offer "
+            "something useful instead (e.g. whether they'd like to see photos or what "
+            "people order there)."
+        )
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
@@ -1308,7 +1329,7 @@ def _handle_highlights(session: ConciergeSession, args: dict[str, Any]) -> str:
     # another city; Places resolves against the place id, so these are the right
     # restaurant by construction. Web images stay on as the top-up, and offline
     # this is empty so the placeholder path is untouched.
-    own_photos = place_photos(rec.get("photos"))
+    own_photos = place_photos(session.photo_refs.get(rec.get("place_id")))
     images = own_photos + [
         img for img in result.get("images", [])
         if img.get("url") not in {p["url"] for p in own_photos}
