@@ -1207,6 +1207,43 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
     }]
     session.profile = profile_memory.remember(session.member_id, learn)
 
+    # The table is booked; now tell them about the place they're going. This used
+    # to be step 7 of the brief and nothing more — an instruction the model
+    # followed most of the time, which in this codebase has repeatedly meant "not
+    # when it mattered". Doing it here makes it part of the confirmation instead
+    # of a thing Dino might remember, and it costs no extra model call: the
+    # dishes and photos arrive in the same result, so the reply that confirms the
+    # booking is also the reply that shows them, in one hop rather than two.
+    shown = _show_highlights(session, rec, "signature dishes and what the place looks like")
+    if shown is not None:
+        highlights, card = shown
+        result["dining_highlights"] = {
+            "dishes_on_card": card["dishes"],
+            "highlights": highlights.get("highlights", []),
+            "note_shown_to_guest": card.get("note"),
+            "source": highlights.get("source"),
+            "disclaimer": highlights.get("disclaimer"),
+        }
+        result["instruction"] = (
+            "Photos and a menu card for this restaurant are ALREADY displayed to "
+            "the guest below your reply — never paste image URLs. Lead with the "
+            "good part: a line about what people order there, drawn from "
+            "`dining_highlights` and attributed ('diners keep mentioning…'), then "
+            "a couple of brief practical tips (arrive a few minutes early, mention "
+            "the reservation name and any dietary need, note the perk at the "
+            "table), and close with the booking summary — restaurant, date, time, "
+            "party size, confirmation id, and the perk applied if there is one. "
+            "Never invent a dish: if `dishes_on_card` is empty, just say the menu "
+            "wasn't published online and give the summary."
+        )
+    else:
+        result["instruction"] = (
+            "No menu details came back for this restaurant. Do NOT describe dishes "
+            "from your own knowledge — give the practical tips and the booking "
+            "summary (restaurant, date, time, party size, confirmation id, and the "
+            "perk applied if there is one)."
+        )
+
     if conflicts:
         _offer_preference_changes(session, conflicts)
         result["preference_check"] = {
@@ -1265,6 +1302,70 @@ def _handle_cancel(session: ConciergeSession, args: dict[str, Any]) -> str:
     return json.dumps(result, ensure_ascii=False)  # already_cancelled | not_found
 
 
+def _show_highlights(
+    session: ConciergeSession, rec: dict[str, Any], focus: str
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Look a restaurant up, put the card and photos in front of the guest.
+
+    Shared by the guest asking ("what's good there?") and by the confirmation,
+    which shows this without being asked. Returns None when the lookup found
+    nothing at all, so the caller can say so rather than invent something.
+
+    Runs as Curator whoever calls it. This is Curator's work — it is the only
+    unit allowed near the open web — and Booker, who calls it after a booking,
+    is explicitly forbidden from it. Stepping into the right unit is the honest
+    way to do that; reaching for the capability from inside Booker would be the
+    dishonest one, and the broker would refuse it anyway.
+    """
+    with roster.acting_as("curator"):
+        result = lookup_dining_highlights(
+            restaurant_name=rec["name"],
+            address=rec.get("address"),
+            website=rec.get("website"),
+            place_id=rec.get("place_id"),
+            focus=focus,
+        )
+        # Photos of the restaurant itself go first. Tavily has only the name to
+        # search on, which is how a guest ends up looking at another branch or a
+        # namesake in another city; Places resolves against the place id, so
+        # these are the right restaurant by construction. Web images stay on as
+        # the top-up, and offline this is empty so placeholders are untouched.
+        own_photos = place_photos(session.photo_refs.get(rec.get("place_id")))
+
+    images = own_photos + [
+        img for img in result.get("images", [])
+        if img.get("url") not in {p["url"] for p in own_photos}
+    ]
+    if not result.get("highlights") and not images:
+        return None
+
+    # A generated, cuisine-themed card fronts the web photos: it gives every
+    # restaurant one consistent, designed panel carrying the dishes we actually
+    # retrieved and the perk, instead of leading with whatever crop the web had.
+    card = menu_card.card_for_restaurant(
+        restaurant=rec["name"],
+        cuisine=rec.get("cuisine"),
+        highlights=result.get("highlights", []),
+        perk=rec.get("perk_title"),
+        perk_is_sample=rec.get("perk_sample", False),
+    )
+
+    # Images go to the UI, not into the model's reply — it would only paste raw
+    # URLs into the chat. The text half stays in the transcript for grounding.
+    session.media.append({
+        "restaurant": rec["name"],
+        "focus": focus,
+        "card": card,
+        "images": images[:MAX_MEDIA_IMAGES],
+        "source": result.get("source"),
+        # So the UI can tell the guest where the photos actually came from —
+        # the restaurant's own domain reads very differently from "the web".
+        "website": rec.get("website"),
+        "citations": result.get("citations", []),
+    })
+    return result, card
+
+
 def _resolve_restaurant(
     session: ConciergeSession, place_id: str | None, name: str | None
 ) -> dict[str, Any] | None:
@@ -1316,26 +1417,8 @@ def _handle_highlights(session: ConciergeSession, args: dict[str, Any]) -> str:
         }, ensure_ascii=False)
 
     focus = (args.get("focus") or "").strip() or "menu highlights and signature dishes"
-    result = lookup_dining_highlights(
-        restaurant_name=rec["name"],
-        address=rec.get("address"),
-        website=rec.get("website"),
-        place_id=rec.get("place_id"),
-        focus=focus,
-    )
-
-    # Photos of the restaurant itself go first. Tavily has only the name to search
-    # on, which is how a guest ends up looking at another branch or a namesake in
-    # another city; Places resolves against the place id, so these are the right
-    # restaurant by construction. Web images stay on as the top-up, and offline
-    # this is empty so the placeholder path is untouched.
-    own_photos = place_photos(session.photo_refs.get(rec.get("place_id")))
-    images = own_photos + [
-        img for img in result.get("images", [])
-        if img.get("url") not in {p["url"] for p in own_photos}
-    ]
-
-    if not result.get("highlights") and not images:
+    shown = _show_highlights(session, rec, focus)
+    if shown is None:
         return json.dumps({
             "status": "nothing_found",
             "restaurant": rec["name"],
@@ -1343,31 +1426,7 @@ def _handle_highlights(session: ConciergeSession, args: dict[str, Any]) -> str:
                        "about the menu online and offer to ask the restaurant when "
                        "they call — do NOT describe dishes from your own knowledge.",
         }, ensure_ascii=False)
-
-    # A generated, cuisine-themed card fronts the web photos: it gives every
-    # restaurant one consistent, designed panel carrying the dishes we actually
-    # retrieved and the perk, instead of leading with whatever crop the web had.
-    card = menu_card.card_for_restaurant(
-        restaurant=rec["name"],
-        cuisine=rec.get("cuisine"),
-        highlights=result.get("highlights", []),
-        perk=rec.get("perk_title"),
-        perk_is_sample=rec.get("perk_sample", False),
-    )
-
-    # Images go to the UI, not into the model's reply — it would only paste raw
-    # URLs into the chat. The text half stays in the transcript for grounding.
-    session.media.append({
-        "restaurant": rec["name"],
-        "focus": focus,
-        "card": card,
-        "images": images[:MAX_MEDIA_IMAGES],
-        "source": result.get("source"),
-        # So the UI can tell the guest where the photos actually came from —
-        # the restaurant's own domain reads very differently from "the web".
-        "website": rec.get("website"),
-        "citations": result.get("citations", []),
-    })
+    result, card = shown
 
     return json.dumps({
         "status": "ok",

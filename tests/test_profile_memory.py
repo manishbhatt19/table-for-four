@@ -531,6 +531,122 @@ def test_a_restaurant_with_no_places_photos_still_shows_what_the_web_found(monke
     assert session.media[-1]["images"][0]["source"] == "placeholder"
 
 
+def _booking_with_highlights(monkeypatch, highlights=None, images=None):
+    """A booking session wired so book_table's automatic lookup is deterministic."""
+    import table_for_four.agent.concierge_chat as cc
+
+    monkeypatch.setattr(cc, "create_booking",
+                        lambda **k: {"booked": True, "confirmation_id": "TF4-0001", "booking": {}})
+    monkeypatch.setattr(cc.profile_memory, "remember", lambda *a, **k: {"email": "g@x.com"})
+    monkeypatch.setattr(cc, "place_photos", lambda refs: [])
+    monkeypatch.setattr(cc, "lookup_dining_highlights", lambda **k: {
+        "source": "live",
+        "highlights": highlights if highlights is not None else [
+            {"title": "Osteria", "snippet": "The cacio e pepe is the one to order.",
+             "url": "https://guide.example/osteria"},
+        ],
+        "images": images if images is not None else [
+            {"url": "https://osteria.example/room.jpg", "source": "osteria.example"},
+        ],
+        "citations": ["https://guide.example/osteria"],
+        "disclaimer": "from the public web",
+    })
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    session.recommendations = {"p1": {"place_id": "p1", "name": "Osteria",
+                                      "cuisine": "italian", "perk_title": "Free dessert"}}
+    _offered(session, party=2)
+    return session
+
+
+def test_a_booking_shows_the_food_and_the_photos_without_being_asked(monkeypatch):
+    # Asked for after a live run. This was step 7 of the brief and nothing more —
+    # an instruction the model followed most of the time, which in this codebase
+    # has repeatedly meant "not when it mattered". Now the confirmation carries it.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    session = _booking_with_highlights(monkeypatch)
+    out = _json.loads(cc._handle_book(session, {
+        "place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 2,
+    }))
+
+    assert out["status"] == "booked"
+    assert out["dining_highlights"]["highlights"], "the dishes ride along with the booking"
+    # And the photos are already in front of the guest, with no second tool call.
+    assert session.media[-1]["restaurant"] == "Osteria"
+    assert session.media[-1]["images"][0]["url"] == "https://osteria.example/room.jpg"
+
+
+def test_the_confirmation_leads_with_the_food_and_ends_with_the_summary(monkeypatch):
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    session = _booking_with_highlights(monkeypatch)
+    out = _json.loads(cc._handle_book(session, {
+        "place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 2,
+    }))
+
+    instruction = out["instruction"]
+    assert instruction.index("what people order") < instruction.index("booking summary")
+    assert "never paste image urls" in instruction.lower()
+    assert "perk applied" in instruction
+
+
+def test_a_restaurant_with_nothing_published_gets_no_invented_dishes(monkeypatch):
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    session = _booking_with_highlights(monkeypatch, highlights=[], images=[])
+    out = _json.loads(cc._handle_book(session, {
+        "place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 2,
+    }))
+
+    assert out["status"] == "booked"          # the table is still booked
+    assert "dining_highlights" not in out
+    assert "Do NOT describe dishes from your own knowledge" in out["instruction"]
+    assert not session.media
+
+
+def test_the_lookup_after_a_booking_runs_as_the_curator(monkeypatch):
+    # Invariant 7. Booker is explicitly forbidden the open web, so the automatic
+    # lookup steps into the unit whose job it is — and hands the floor back.
+    import table_for_four.agent.concierge_chat as cc
+    from table_for_four.agent import roster
+
+    seen = {}
+    session = _booking_with_highlights(monkeypatch)
+    monkeypatch.setattr(cc, "lookup_dining_highlights",
+                        lambda **k: seen.setdefault("unit", roster.acting_unit()) and None or {
+                            "source": "live", "highlights": [{"title": "x", "snippet": "y",
+                                                              "url": "https://z.example"}],
+                            "images": [], "citations": [],
+                        })
+
+    with roster.acting_as("booker"):
+        cc._handle_book(session, {"place_id": "p1", "date": FUTURE_DATE,
+                                  "time": "19:00", "party_size": 2})
+        assert roster.acting_unit() == "booker", "the floor must come back to Booker"
+
+    assert seen["unit"] == "curator"
+
+
+def test_booker_still_cannot_reach_the_web_on_its_own():
+    # The step above is Booker *asking Curator to act*, not Booker acquiring the
+    # capability. If this ever passes, the grant has quietly widened.
+    import pytest as _pytest
+
+    from table_for_four.agent import roster
+    from table_for_four.agent.tools import TOOLS
+
+    with roster.acting_as("booker"):
+        with _pytest.raises(roster.NotGranted):
+            TOOLS["lookup_dining_highlights"](restaurant_name="Osteria")
+
+
 def test_a_time_the_guest_already_asked_for_is_not_put_back_to_them(monkeypatch):
     # Demo feedback: the guest says "7pm", it's free, and Dino reads the whole
     # list back and asks them to choose. They already chose. Asking again is the
