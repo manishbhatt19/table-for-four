@@ -28,6 +28,7 @@ from table_for_four.agent.concierge_chat import (
     ConciergeSession,
     _run_turn,
     start_session,
+    to_12h,
 )
 from table_for_four.agent.config import get_chat_llm
 
@@ -309,9 +310,12 @@ def _time_chips(session: ConciergeSession) -> str | None:
         # under the one above it rather than stretching to fill.
         cols = st.columns(CHIPS_PER_ROW)
         for col, slot in zip(cols, slots[start:start + CHIPS_PER_ROW]):
+            # Labelled the way a guest reads a time, keyed on the way the ledger
+            # stores one — and it sends the label, which `clock_times` resolves
+            # straight back to the slot, so the booking guard still sees the choice.
             key = f"slot-{pend.get('place_id')}-{pend.get('date')}-{slot}"
-            if col.button(slot, key=key, use_container_width=True):
-                picked = slot
+            if col.button(to_12h(slot), key=key, use_container_width=True):
+                picked = to_12h(slot)
     return picked
 
 

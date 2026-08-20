@@ -666,9 +666,85 @@ def test_a_time_the_guest_already_asked_for_is_not_put_back_to_them(monkeypatch)
 
     out = _json.loads(cc._handle_times(session, {"place_id": "p1", "date": FUTURE_DATE}))
 
-    assert out["guest_already_chose"] == "19:00"
-    assert "Do NOT read the other times back" in out["instruction"]
+    assert out["guest_already_chose"] == "7 PM"
+    # Telling the model not to read the list back didn't hold — it still did. So
+    # the list isn't there to read: their time is the only one in the payload.
+    assert out["available_times"] == ["19:00"]
+    assert out["available_times_display"] == ["7 PM"]
+    assert out["other_times_open"] == 2
     assert "photos" in out["instruction"]  # spend the spare question on something useful
+    # The full set stays on the session, or the booking guard would refuse a slot
+    # the guest could legitimately switch to.
+    assert session.availability["slots"] == ["18:00", "19:00", "20:00"]
+
+
+def test_asking_what_else_is_open_gets_a_real_answer(monkeypatch):
+    # The shortcut fires once per restaurant and date. If the guest does want the
+    # alternatives, the next call has to come back with all of them.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+    from langchain_core.messages import HumanMessage
+
+    monkeypatch.setattr(cc, "check_availability",
+                        lambda *a, **k: {"available_slots": ["18:00", "19:00", "20:00"]})
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    _listed(session)
+    session.pending["party_size"] = 2
+    session.messages = [HumanMessage(content="7pm would be perfect")]
+
+    first = _json.loads(cc._handle_times(session, {"place_id": "p1", "date": FUTURE_DATE}))
+    second = _json.loads(cc._handle_times(session, {"place_id": "p1", "date": FUTURE_DATE}))
+
+    assert first["available_times"] == ["19:00"]
+    assert second["available_times"] == ["18:00", "19:00", "20:00"]
+    assert "guest_already_chose" not in second
+
+
+def test_times_are_spoken_the_way_a_guest_says_them(monkeypatch):
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    monkeypatch.setattr(cc, "check_availability",
+                        lambda *a, **k: {"available_slots": ["11:30", "12:00", "19:30", "00:30"]})
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    _listed(session)
+    session.pending["party_size"] = 2
+
+    out = _json.loads(cc._handle_times(session, {"place_id": "p1", "date": FUTURE_DATE}))
+
+    assert out["available_times_display"] == ["11:30 AM", "12 PM", "7:30 PM", "12:30 AM"]
+    assert out["available_times"] == ["11:30", "12:00", "19:30", "00:30"]  # unchanged for booking
+
+
+def test_booking_accepts_the_time_the_way_dino_says_it(monkeypatch):
+    # Dino now talks in "7 PM", so it will pass "7 PM" here. The ledger keys on
+    # 19:00, and the open slots settle anything ambiguous.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    monkeypatch.setattr(cc, "create_booking",
+                        lambda **k: {"booked": True, "confirmation_id": "TF4-0001", "booking": {}})
+    monkeypatch.setattr(cc.profile_memory, "remember", lambda *a, **k: {"email": "g@x.com"})
+    monkeypatch.setattr(cc, "place_photos", lambda refs: [])
+    monkeypatch.setattr(cc, "lookup_dining_highlights",
+                        lambda **k: {"source": "fixture", "highlights": [], "images": [], "citations": []})
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    _listed(session)
+    _offered(session, party=2, slots=("19:00", "20:00"))
+
+    out = _json.loads(cc._handle_book(session, {
+        "place_id": "p1", "date": FUTURE_DATE, "time": "7 PM", "party_size": 2,
+    }))
+
+    assert out["status"] == "booked"
+    assert out["time"] == "19:00"        # what the ledger stores
+    assert out["time_display"] == "7 PM"  # what the guest is told
 
 
 def test_the_times_are_still_offered_when_the_guest_named_none(monkeypatch):

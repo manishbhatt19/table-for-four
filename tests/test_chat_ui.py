@@ -44,8 +44,9 @@ def _session_with_times(slots=SLOTS) -> ConciergeSession:
 def test_open_times_are_offered_as_buttons():
     at = _app(_session_with_times()).run()
 
-    for slot in SLOTS:
-        assert slot in _chips(at), f"{slot} was returned by the tool but not offered"
+    # Labelled the way a guest reads a time, not the way the ledger stores one.
+    for slot, label in zip(SLOTS, ["6 PM", "6:30 PM", "7 PM", "7:30 PM", "8 PM", "8:30 PM"]):
+        assert label in _chips(at), f"{slot} was returned by the tool but not offered"
 
 
 def test_only_times_a_tool_returned_are_ever_shown():
@@ -53,7 +54,7 @@ def test_only_times_a_tool_returned_are_ever_shown():
     # availability check, never a guess at what a restaurant might manage.
     at = _app(_session_with_times(["19:00"])).run()
 
-    assert _chips(at) == ["19:00"]
+    assert _chips(at) == ["7 PM"]
 
 
 def test_tapping_a_time_speaks_as_the_guest(monkeypatch):
@@ -76,7 +77,9 @@ def test_tapping_a_time_speaks_as_the_guest(monkeypatch):
     at.button(key=f"slot-p1-{FUTURE_DATE}-19:00").click().run()
 
     said = [m.content for m in session.messages if isinstance(m, HumanMessage)]
-    assert "19:00" in said, "the tap never reached the transcript"
+    assert "7 PM" in said, "the tap never reached the transcript"
+    # And it still resolves to the slot the booking guard compares against, which
+    # is the whole reason a tap speaks instead of setting state.
     assert "19:00" in cc._requested_times(session), "the pass would not see the choice"
 
 

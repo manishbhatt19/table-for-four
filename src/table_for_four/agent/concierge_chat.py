@@ -300,6 +300,7 @@ class ConciergeSession:
     # recapping the times of a restaurant discussed ten turns ago is legitimate.
     offered_times: set[str] = field(default_factory=set)
     offered_dates: set[str] = field(default_factory=set)
+    time_shortcuts: set[str] = field(default_factory=set)           # place|date already confirmed straight through
     trail: audit.Trail = field(default_factory=audit.Trail)         # M4 governance record
 
     def __post_init__(self) -> None:
@@ -308,6 +309,42 @@ class ConciergeSession:
     @property
     def display_name(self) -> str:
         return (self.profile or {}).get("name") or self.member_id
+
+
+_HHMM = re.compile(r"^\d{2}:\d{2}$")
+
+
+def to_12h(hhmm: str) -> str:
+    """`19:00` -> `7 PM`, `11:30` -> `11:30 AM` — a time the way a guest says one.
+
+    Only ever for display. Slots, the ledger and every comparison stay on 24-hour
+    `HH:MM`, because that is what sorts and matches; this is the last inch before
+    the words reach a person.
+    """
+    try:
+        hour, minute = (int(part) for part in hhmm.split(":"))
+    except (ValueError, AttributeError):
+        return hhmm
+    suffix = "AM" if hour < 12 else "PM"
+    hour12 = hour % 12 or 12
+    return f"{hour12} {suffix}" if minute == 0 else f"{hour12}:{minute:02d} {suffix}"
+
+
+def _canonical_time(raw: str, slots: list[str] | None) -> str:
+    """Turn whatever the model wrote back into an `HH:MM` slot.
+
+    Dino now says "7 PM" to the guest, so sooner or later it will pass "7 PM"
+    here too. A written time can be ambiguous ("7:30" is two different hours), so
+    the open slots break the tie; with no single answer the string is handed on
+    untouched and the checks below refuse it, which is the safe direction.
+    """
+    if _HHMM.fullmatch(raw or ""):
+        return raw
+    readings = grounding.clock_times(raw or "")
+    narrowed = readings & set(slots or ())
+    if len(narrowed) == 1:
+        return next(iter(narrowed))
+    return next(iter(readings)) if len(readings) == 1 else raw
 
 
 # Reading a written time is now governance's job — the same parser has to serve
@@ -994,25 +1031,38 @@ def _handle_times(session: ConciergeSession, args: dict[str, Any]) -> str:
             )
         return json.dumps(payload, ensure_ascii=False)
     payload = {
-        "status": "ok", "restaurant": rec["name"], "date": iso, "available_times": slots,
+        "status": "ok", "restaurant": rec["name"], "date": iso,
+        "available_times": slots,
+        "available_times_display": [to_12h(s) for s in slots],
         "remembered": {"restaurant": rec["name"], "date": iso, "party_size": party_size},
-        "reminder": "Book the exact time the guest picks from available_times; keep "
-                    "this date and party size.",
+        "reminder": "Say times to the guest the way available_times_display writes "
+                    "them (7 PM, not 19:00). Book the exact time the guest picks; "
+                    "keep this date and party size.",
     }
-    # If the guest already named a time and it's free, they have chosen. Reading
-    # the whole list back and asking them to choose again reads as not having
-    # listened — the same failure as offering a shortlist to someone who already
-    # named the restaurant. Confirm it, and spend the question on something they
-    # might actually want.
+
+    # If the guest already named a time and it's free, they have chosen. Telling
+    # the model not to read the list back didn't hold — it still did — so the list
+    # is simply not here to read. Their time is the only one in the payload; the
+    # full set stays on the session for the booking guard, and the model can ask
+    # for it again if the guest actually wants alternatives. Once per restaurant
+    # and date, so "what else is open?" gets a real answer on the second call.
     already_asked = sorted(_requested_times(session) & set(slots))
-    if already_asked:
-        payload["guest_already_chose"] = already_asked[0]
+    shortcut = f"{place_id}|{iso}"
+    if already_asked and shortcut not in session.time_shortcuts:
+        session.time_shortcuts.add(shortcut)
+        chosen = already_asked[0]
+        payload["available_times"] = [chosen]
+        payload["available_times_display"] = [to_12h(chosen)]
+        payload["guest_already_chose"] = to_12h(chosen)
+        payload["other_times_open"] = len(slots) - 1
         payload["instruction"] = (
-            f"The guest asked for {already_asked[0]} and it is free. Do NOT read the "
-            "other times back or ask them to pick again — confirm that time, read the "
-            "booking details back for a yes, and use the spare question to offer "
-            "something useful instead (e.g. whether they'd like to see photos or what "
-            "people order there)."
+            f"The guest asked for {to_12h(chosen)} and it is free, so that is the "
+            "only time listed here — the others are deliberately withheld. Do NOT "
+            "read a list back or ask them to pick again; they have already chosen. "
+            "Confirm that time, read the booking details back for a yes, and spend "
+            "the question you just saved on something they'd like (photos, or what "
+            "people order there). If they ask what else is open, call "
+            "check_availability_times again and the full list comes back."
         )
     return json.dumps(payload, ensure_ascii=False)
 
@@ -1092,9 +1142,14 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
             "message": "Nothing was free at this restaurant on this date. Offer the "
                        "alternatives or another date — do not book.",
         }, ensure_ascii=False)
+    # Dino talks to the guest in "7 PM" now, so it will pass that here sooner or
+    # later. The ledger keys on 19:00; the open slots settle any ambiguity.
+    time = _canonical_time(time, pend["slots"])
     if time not in pend["slots"]:
         return json.dumps({
-            "status": "time_unavailable", "available_times": pend["slots"],
+            "status": "time_unavailable",
+            "available_times": pend["slots"],
+            "available_times_display": [to_12h(s) for s in pend["slots"]],
             "message": "That time isn't available; offer one of the available_times.",
         }, ensure_ascii=False)
     # If the guest explicitly asked for an available time, book THAT time — don't
@@ -1155,6 +1210,7 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
             "error": booking.get("error"),
             "attempted_time": time,
             "available_times": fresh,
+            "available_times_display": [to_12h(s) for s in fresh],
             "message": stands + (
                 " Then offer the times in available_times and let them pick another. "
                 "Never imply the table is being held."
@@ -1172,6 +1228,7 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
         "website": rec.get("website"),
         "date": iso,
         "time": time,
+        "time_display": to_12h(time),
         "party_size": party_size,
         "confirmation_id": booking.get("confirmation_id"),
         "perk_applied": rec.get("perk_title"),
