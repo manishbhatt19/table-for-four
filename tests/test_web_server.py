@@ -297,3 +297,131 @@ class _FakeResponse:
 
     def json(self) -> dict:
         return self._payload
+
+
+# --- The restaurant's own site -----------------------------------------------
+
+class _FakePage:
+    """Just enough of an httpx response to stand in for a fetched web page."""
+
+    def __init__(self, html: str, url: str = "https://osteria.example/",
+                 content_type: str = "text/html; charset=utf-8"):
+        self.text = html
+        self.url = url
+        self.headers = {"content-type": content_type}
+
+    def raise_for_status(self) -> None:
+        return None
+
+
+def _page(monkeypatch, page):
+    """Serve `page` (or raise it, if it's an exception) as the site fetch."""
+    def fake_get(url, **_kw):
+        if isinstance(page, Exception):
+            raise page
+        return page
+    monkeypatch.setattr(web_server.httpx, "get", fake_get)
+
+
+def test_the_picture_a_restaurant_chose_for_itself_comes_first(monkeypatch):
+    # og:image is what the owner picked to represent the page, served from their
+    # own domain — so unlike anything a search index returns it cannot be a
+    # different branch or a namesake in another city.
+    _page(monkeypatch, _FakePage(
+        '<html><head>'
+        '<meta property="og:image" content="/img/dining-room.jpg">'
+        '</head><body><img src="https://osteria.example/logo.png"></body></html>'
+    ))
+
+    images = web_server.site_images("https://osteria.example/", "Osteria")
+
+    assert images[0]["url"] == "https://osteria.example/img/dining-room.jpg"
+    assert images[0]["source"] == "osteria.example"
+    assert "Osteria's own site" in images[0]["description"]
+    # The logo is furniture, not a photograph.
+    assert all("logo" not in i["url"] for i in images)
+
+
+def test_schema_org_images_are_read_too(monkeypatch):
+    _page(monkeypatch, _FakePage(
+        '<html><head><script type="application/ld+json">'
+        '{"@type":"Restaurant","name":"Osteria",'
+        '"image":["https://cdn.example/plate-1.jpg","https://cdn.example/plate-2.jpg"]}'
+        "</script></head></html>"
+    ))
+
+    urls = [i["url"] for i in web_server.site_images("https://osteria.example/")]
+    assert urls[:2] == ["https://cdn.example/plate-1.jpg", "https://cdn.example/plate-2.jpg"]
+
+
+def test_malformed_schema_markup_is_skipped_not_fatal(monkeypatch):
+    _page(monkeypatch, _FakePage(
+        '<html><head><script type="application/ld+json">{not json at all</script>'
+        '<meta property="og:image" content="https://cdn.example/hero.jpg"></head></html>'
+    ))
+
+    assert [i["url"] for i in web_server.site_images("https://osteria.example/")] == [
+        "https://cdn.example/hero.jpg"
+    ]
+
+
+def test_a_dead_or_slow_site_costs_the_guest_nothing(monkeypatch):
+    # Invariant 4, one level down: a restaurant with a broken site must not take
+    # the dining tips down with it.
+    import httpx
+
+    _page(monkeypatch, httpx.ConnectError("no route to host"))
+    assert web_server.site_images("https://gone.example/") == []
+
+
+def test_a_non_html_response_is_not_scraped(monkeypatch):
+    _page(monkeypatch, _FakePage("%PDF-1.4 ...", content_type="application/pdf"))
+    assert web_server.site_images("https://menu.example/menu.pdf") == []
+
+
+def test_no_website_means_no_fetch(monkeypatch):
+    def explode(*_a, **_k):
+        raise AssertionError("should not have reached the network")
+
+    monkeypatch.setattr(web_server.httpx, "get", explode)
+    assert web_server.site_images("") == []
+    assert web_server.site_images(None) == []
+
+
+def test_the_offline_path_never_touches_a_restaurant_site(monkeypatch):
+    # The graded demo runs with no keys. Fixture mode must stay a pure local
+    # read — a site fetch in there would break the "no network" guarantee.
+    def explode(*_a, **_k):
+        raise AssertionError("fixture mode reached the network")
+
+    monkeypatch.setattr(web_server.httpx, "get", explode)
+    monkeypatch.setattr(web_server.httpx, "post", explode)
+
+    out = lookup_dining_highlights(
+        restaurant_name="Nonna's Gluten-Free Kitchen",
+        website="https://nonnas.example/",
+        place_id="fixture-pizzeria-3",
+    )
+    assert out["source"] == "fixture"
+
+
+def test_site_photos_lead_the_live_image_strip(monkeypatch):
+    monkeypatch.setattr(web_server, "TAVILY_API_KEY", "test-key")
+    _page(monkeypatch, _FakePage(
+        '<meta property="og:image" content="https://osteria.example/room.jpg">'
+    ))
+    monkeypatch.setattr(web_server.httpx, "post", lambda *a, **k: _FakeResponse({
+        "results": [{
+            "title": "Osteria", "url": "https://guide.example/osteria",
+            "content": "Signature dishes include the tasting menu, $65.",
+            "images": ["https://guide.example/somewhere-else.jpg"],
+        }],
+        "images": [],
+    }))
+
+    out = lookup_dining_highlights(
+        restaurant_name="Osteria", website="https://osteria.example/",
+    )
+
+    assert out["images"][0]["url"] == "https://osteria.example/room.jpg"
+    assert any("guide.example" in i["url"] for i in out["images"]), "web photos still fill in"

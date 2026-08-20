@@ -193,9 +193,32 @@ def _render_media(items: list[dict[str, Any]]) -> None:
                 f'<div style="display:flex;gap:10px;flex-wrap:wrap;margin:2px 0 8px">{cards}</div>',
                 unsafe_allow_html=True,
             )
-            label = "placeholder images (offline mode)" if item.get("source") == "fixture" \
-                else "from the public web, not the restaurant"
-            st.caption(f"📸 {item.get('restaurant', 'Restaurant')} · {label}")
+            st.caption(f"📸 {item.get('restaurant', 'Restaurant')} · {_provenance(item, images)}")
+
+
+def _provenance(item: dict[str, Any], images: list[dict[str, Any]]) -> str:
+    """Say where these photos actually came from.
+
+    This caption used to read "from the public web, not the restaurant" for
+    everything, which was honest when everything did come from a search index.
+    Now the best of them come from Google against the place id, or from the
+    restaurant's own domain, and telling a guest otherwise would be its own
+    small untruth — in the direction of underselling, but untrue either way.
+    """
+    if item.get("source") == "fixture":
+        return "placeholder images (offline mode)"
+    sources = {(img.get("source") or "").lower() for img in images}
+    if "google places" in sources:
+        return "from Google Places and the web"
+    site = _domain(item.get("website") or "")
+    if site and site in sources:
+        return f"from {site} and the web"
+    return "from the public web, not the restaurant"
+
+
+def _domain(url: str) -> str:
+    host = url.split("//")[-1].split("/")[0].lower()
+    return host[4:] if host.startswith("www.") else host
 
 
 def _render_trail(session: ConciergeSession) -> None:

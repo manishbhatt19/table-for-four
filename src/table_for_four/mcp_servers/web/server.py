@@ -34,7 +34,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
 from dotenv import load_dotenv
@@ -143,10 +143,19 @@ _NOT_A_PHOTO = re.compile(
 _ASSET_HOSTS = ("gstatic.com", "maps.wikimedia.org", "w3.org", "fonts.googleapis.com")
 
 
+# A word-boundary match misses the way real sites name these files —
+# "faviconnew.webp", "katz_WEBicons_Shipping.png", "logopos.webp" all sailed
+# through and landed in a photo strip. These tokens match as substrings instead.
+# "map" is deliberately not among them: "mapo tofu" and "maple" are food.
+_FURNITURE = re.compile(r"(favicon|sprite|logo|icons)", re.I)
+
+
 def _is_photo(url: str, description: str) -> bool:
     if url.lower().split("?")[0].endswith(".svg"):  # vector = furniture, not a photo
         return False
     if any(host in _domain(url) for host in _ASSET_HOSTS):
+        return False
+    if _FURNITURE.search(url):
         return False
     return not _NOT_A_PHOTO.search(f"{url} {description}")
 
@@ -173,6 +182,190 @@ def _normalize_images(raw: list[Any], fallback_caption: str = "") -> list[dict[s
             "description": _clean(description) or _clean(fallback_caption) or "Photo from the web",
             "source": _domain(url),
         })
+        if len(out) >= MAX_IMAGES:
+            break
+    return out
+
+
+# --- The restaurant's own site -----------------------------------------------
+#
+# Scoping the Tavily *search* to the restaurant's domain was only ever half the
+# job: `include_domains` filters which pages match, but the images that come back
+# are whatever the index happens to hold, and the separate image query ignores
+# the domain entirely. So a guest kept being shown another branch, or a namesake
+# in another city.
+#
+# Fetching the site ourselves fixes that at the source. What a restaurant puts in
+# its own `og:image` is the picture it chose to represent itself — and it is on
+# their domain, so it cannot be somewhere else's dining room. That is the same
+# structural guarantee Places photos have, from the other direction.
+
+# Deliberately short: this sits inside a live conversation, and a slow site must
+# cost the guest a second, not their dining tips.
+SITE_TIMEOUT = 6.0
+SITE_MAX_BYTES = 600_000  # a head-and-shoulders read; we only need <head> really
+SITE_AGENT = "TableForFour/1.0 (restaurant concierge; +https://example.invalid/bot)"
+
+_OG_IMAGE = re.compile(
+    r"""<meta[^>]+(?:property|name)\s*=\s*["'](?:og:image(?::url)?|twitter:image)["'][^>]*>""",
+    re.I,
+)
+_CONTENT_ATTR = re.compile(r"""content\s*=\s*["']([^"']+)["']""", re.I)
+_JSON_LD = re.compile(
+    r"""<script[^>]+type\s*=\s*["']application/ld\+json["'][^>]*>(.*?)</script>""",
+    re.I | re.S,
+)
+_IMG_SRC = re.compile(r"""<img[^>]+src\s*=\s*["']([^"']+)["']""", re.I)
+
+# Found by running this against real restaurant sites, which is the only way this
+# kind of thing gets found: Gramercy Tavern's page yielded its own homepage URL
+# and a Facebook tracking pixel alongside the actual photograph.
+_TRACKER_HOSTS = (
+    "facebook.com", "facebook.net", "google-analytics.com", "googletagmanager.com",
+    "doubleclick.net", "bing.com", "hotjar.com", "segment.io", "pinterest.com",
+    "tiktok.com", "snapchat.com", "criteo.com", "clarity.ms",
+)
+# Restaurant sites overwhelmingly sit on a handful of hosted platforms, whose
+# image URLs carry no file extension at all.
+_IMAGE_HOSTS = (
+    "getbento.com", "squarespace-cdn.com", "squarespace.com", "wixstatic.com",
+    "cloudinary.com", "imgix.net", "shopify.com", "cloudfront.net",
+    "googleusercontent.com", "resengo.com", "toasttab.com",
+)
+_IMAGE_EXT = re.compile(r"\.(jpe?g|png|webp|avif|gif)(\?|#|$)", re.I)
+
+
+def _is_image_url(url: str, *, declared: bool) -> bool:
+    """Is this plausibly a photograph rather than a page, a pixel, or a script?
+
+    `declared` marks a URL the site itself nominated as its image (og:image or
+    schema.org). Those get the benefit of the doubt about their shape, because
+    hosted platforms serve perfectly good photos from extensionless URLs. A URL
+    merely scraped off an <img> tag has to look like an image to count.
+    """
+    host = _domain(url)
+    if any(tracker in host for tracker in _TRACKER_HOSTS):
+        return False
+    path = urlsplit(url).path
+    if path in ("", "/"):
+        return False  # a link to the site itself, not a picture on it
+    if declared:
+        return True
+    return bool(_IMAGE_EXT.search(url)) or any(h in host for h in _IMAGE_HOSTS)
+
+
+def _same_site(requested: str, final: str) -> bool:
+    """Did the fetch end up on the domain we asked for?
+
+    Compared on the last two labels, so `example.com` → `www.example.com` and a
+    plain http → https upgrade both count as the same place, while a redirect off
+    to somebody else's domain does not.
+    """
+    def registrable(url: str) -> str:
+        return ".".join(_domain(url).split(".")[-2:])
+
+    return bool(registrable(requested)) and registrable(requested) == registrable(final)
+
+
+def _absolute(url: str, base: str) -> str:
+    """Resolve a possibly-relative image URL against the page it came from."""
+    try:
+        return urljoin(base, (url or "").strip())
+    except ValueError:
+        return ""
+
+
+def _json_ld_images(html: str) -> list[str]:
+    """Images declared in schema.org markup, which restaurants use for menus."""
+    found: list[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            value = node.get("image")
+            if isinstance(value, str):
+                found.append(value)
+            elif isinstance(value, list):
+                found.extend(v for v in value if isinstance(v, str))
+            elif isinstance(value, dict) and isinstance(value.get("url"), str):
+                found.append(value["url"])
+            for child in node.values():
+                walk(child)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child)
+
+    for block in _JSON_LD.findall(html):
+        try:
+            walk(json.loads(block))
+        except (ValueError, TypeError):
+            continue  # a malformed block is common and not worth failing over
+    return found
+
+
+def site_images(website: str, restaurant_name: str = "") -> list[dict[str, Any]]:
+    """Photos published by the restaurant itself, read from its own page.
+
+    Order is by how deliberate the choice was: `og:image` is what the owner
+    picked to represent the page, schema.org `image` is what they declared to
+    search engines, and only then the page's own `<img>` tags, which are as
+    likely to be a logo as a plate and lean on `_is_photo` to sort it out.
+
+    Every failure here is swallowed. A restaurant with a dead site, a JS-only
+    page, or a slow host should cost the guest nothing — the caller simply falls
+    through to the sources it already had, which is also what happens offline.
+    """
+    if not (website or "").strip():
+        return []
+    try:
+        resp = httpx.get(
+            website,
+            timeout=SITE_TIMEOUT,
+            follow_redirects=True,
+            headers={"User-Agent": SITE_AGENT, "Accept": "text/html,*/*"},
+        )
+        resp.raise_for_status()
+        if "html" not in resp.headers.get("content-type", "").lower():
+            return []
+        html = resp.text[:SITE_MAX_BYTES]
+    except (httpx.HTTPError, UnicodeDecodeError, ValueError):
+        return []
+
+    base = str(resp.url)
+    # A restaurant that closed and let its domain lapse now serves whoever bought
+    # it. The Spotted Pig's address redirects to a parked site, and without this
+    # a guest would have been shown a squatter's banners as the restaurant's own
+    # photographs — the exact failure this whole function exists to prevent, just
+    # arriving by a different road. If the redirect left the site we asked for,
+    # we cannot vouch for anything on it.
+    if not _same_site(website, base):
+        return []
+    # (url, was it the site's own nomination?) — order is by how deliberate the
+    # choice was, so the picture the owner picked leads.
+    candidates: list[tuple[str, bool]] = []
+    for tag in _OG_IMAGE.findall(html):
+        match = _CONTENT_ATTR.search(tag)
+        if match:
+            candidates.append((match.group(1), True))
+    candidates += [(url, True) for url in _json_ld_images(html)]
+    candidates += [(url, False) for url in _IMG_SRC.findall(html)]
+
+    caption = f"From {restaurant_name}'s own site" if restaurant_name else "From the restaurant's own site"
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw, declared in candidates:
+        url = _absolute(raw, base)
+        if not url.startswith("http"):
+            continue
+        # Deduped on the path, not the whole URL: og:image and twitter:image are
+        # usually the same photograph with different resize parameters, and a
+        # strip that shows a guest the same room twice looks broken.
+        key = f"{_domain(url)}{urlsplit(url).path}"
+        if key in seen:
+            continue
+        if not _is_image_url(url, declared=declared) or not _is_photo(url, caption):
+            continue
+        seen.add(key)
+        out.append({"url": url, "description": caption, "source": _domain(base)})
         if len(out) >= MAX_IMAGES:
             break
     return out
@@ -407,9 +600,12 @@ def lookup_dining_highlights(
             _search_live(query, include_domains=[site] if site else None,
                          want_images=include_images)
         )
-        # Photos lifted off the restaurant's own pages are the safest of all:
-        # right restaurant, right branch, by construction.
-        images = list(data["page_images"])
+        # The restaurant's own site leads. `og:image` is a picture it chose to
+        # represent itself, served from its own domain, so unlike anything a
+        # search index returns it cannot be a different branch or a namesake.
+        # Then photos Tavily lifted off the pages that actually matched.
+        images = _merge_images(site_images(website or "", restaurant_name),
+                               data["page_images"])
 
         # Narrow first, widen if the official site gave us nothing to say. That
         # covers both an empty answer and the commoner case: a site whose menu is

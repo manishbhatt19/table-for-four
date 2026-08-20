@@ -1363,6 +1363,9 @@ def _handle_highlights(session: ConciergeSession, args: dict[str, Any]) -> str:
         "card": card,
         "images": images[:MAX_MEDIA_IMAGES],
         "source": result.get("source"),
+        # So the UI can tell the guest where the photos actually came from —
+        # the restaurant's own domain reads very differently from "the web".
+        "website": rec.get("website"),
         "citations": result.get("citations", []),
     })
 
