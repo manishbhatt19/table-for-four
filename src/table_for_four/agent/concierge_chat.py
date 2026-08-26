@@ -301,6 +301,12 @@ class ConciergeSession:
     offered_times: set[str] = field(default_factory=set)
     offered_dates: set[str] = field(default_factory=set)
     time_shortcuts: set[str] = field(default_factory=set)           # place|date already confirmed straight through
+    # The reserve gate. `confirm_in_ui` is set only by a surface that can actually
+    # show a button; without one the old path stands, because a gate nobody can
+    # answer is a dead end rather than a safeguard.
+    confirm_in_ui: bool = False
+    pending_reservation: dict[str, Any] | None = None               # summary awaiting a press
+    reserved: set[str] = field(default_factory=set)                 # keys the guest has pressed Reserve on
     trail: audit.Trail = field(default_factory=audit.Trail)         # M4 governance record
 
     def __post_init__(self) -> None:
@@ -494,6 +500,49 @@ def _norm_text(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
 
 
+# A guest says where they want to eat in the shape of a sentence, not a field:
+# "somewhere near Midtown", "around soho", "close to my office". What lands in
+# their permanent file should be the place, curated, not the phrasing.
+_AREA_LEAD = re.compile(
+    r"^(somewhere|anywhere|something)?\s*(near|around|close to|next to|by|in|at|"
+    r"over in|out in|round)\s+", re.I
+)
+_AREA_TRAIL = re.compile(r"\s*\b(area|neighbou?rhood|district|side|part of town)\b\s*$", re.I)
+
+# Phrases that read like a place but name none. Saving one of these as a home
+# area is worse than saving nothing: it comes back next visit as a fact about
+# the guest, and "here" means nothing a month later in a different conversation.
+_NOT_AN_AREA = {
+    "", "here", "there", "me", "my place", "my office", "my home", "home", "work",
+    "my area", "nearby", "close by", "close", "near me", "around here", "anywhere",
+    "any", "anything", "somewhere", "wherever", "local", "locally", "this area",
+    "the area", "downtown", "uptown", "city", "the city", "town", "everywhere",
+}
+
+
+def _clean_area(value: Any) -> str | None:
+    """A place name fit to keep, or None if the text doesn't actually name one.
+
+    The guest's own words are right for *this* search and wrong for their file.
+    "somewhere near soho" is a fine thing to say and a poor thing to remember, so
+    the phrasing is stripped, the result is title-cased, and anything that turns
+    out to name no place at all is refused rather than stored.
+
+    Deliberately not asked of the model. A normalizer that can only ever delete
+    words cannot invent a neighbourhood the guest never mentioned, which is a
+    guarantee a fluent rewrite could not make.
+    """
+    text = re.sub(r"\s+", " ", str(value or "").strip())
+    text = _AREA_LEAD.sub("", text)
+    text = _AREA_TRAIL.sub("", text)
+    text = text.strip(" ,.;:-")
+    if _norm_text(text) in _NOT_AN_AREA or len(text) > 60:
+        return None
+    # Leave anything already carrying capitals alone — "SoHo" and "NoMad" are
+    # spelled that way, and title-casing would quietly correct them to nonsense.
+    return text if any(c.isupper() for c in text) else text.title()
+
+
 def _clean_cuisine(value: Any) -> str | None:
     """A cuisine label, or None if the text doesn't actually name a cuisine."""
     label = _norm_text(value)
@@ -560,7 +609,15 @@ def _profile_context(profile: dict[str, Any] | None) -> str:
 
 # --- Tool dispatch -----------------------------------------------------------
 
-def _handle_remember(session: ConciergeSession, args: dict[str, Any]) -> str:
+def _curated(session: ConciergeSession, args: dict[str, Any]) -> dict[str, Any]:
+    """The parts of a write worth keeping, in the form worth keeping them in.
+
+    Two fields arrive as the guest's own phrasing and must not be filed that way:
+    a cuisine that is really a category or a venue's name, and an area that is
+    really a sentence ("somewhere near soho") or nothing at all ("nearby"). Both
+    are dropped rather than stored badly — a profile is read back to the guest
+    later, and a wrong fact about them is worse than a missing one.
+    """
     updates = {k: v for k, v in args.items() if v not in (None, "", [], {})}
     if "cuisines" in updates:
         cuisines = _clean_cuisines(session, updates["cuisines"])
@@ -568,6 +625,17 @@ def _handle_remember(session: ConciergeSession, args: dict[str, Any]) -> str:
             updates["cuisines"] = cuisines
         else:
             updates.pop("cuisines")  # "restaurant", a venue's name — not a taste
+    if "home_location" in updates:
+        area = _clean_area(updates["home_location"])
+        if area:
+            updates["home_location"] = area
+        else:
+            updates.pop("home_location")  # "nearby", "my place" — names nowhere
+    return updates
+
+
+def _handle_remember(session: ConciergeSession, args: dict[str, Any]) -> str:
+    updates = _curated(session, args)
     if not updates:
         return "Nothing to save."
 
@@ -597,13 +665,7 @@ def _handle_remember(session: ConciergeSession, args: dict[str, Any]) -> str:
 
 def _handle_confirm_prefs(session: ConciergeSession, args: dict[str, Any]) -> str:
     """Apply a standing-preference change the guest actually asked for."""
-    updates = {k: v for k, v in args.items() if v not in (None, "", [], {})}
-    if "cuisines" in updates:
-        cuisines = _clean_cuisines(session, updates["cuisines"])
-        if cuisines:
-            updates["cuisines"] = cuisines
-        else:
-            updates.pop("cuisines")
+    updates = _curated(session, args)
     if not updates:
         return json.dumps({
             "status": "nothing_to_update",
@@ -1168,6 +1230,8 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
     if key in session.bookings:  # idempotency
         return json.dumps({**session.bookings[key], "status": "already_booked"}, ensure_ascii=False)
 
+    # Assembled before the gate rather than after it, so the guest is shown the
+    # same special requests that will actually reach the restaurant.
     extras: list[str] = []
     if profile.get("dietary"):
         extras.append(", ".join(profile["dietary"]))
@@ -1178,6 +1242,46 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
         extras.append(f"{high_chairs} high chair(s)")
     special = "; ".join(extras) or None
 
+    # The hand on the door. Every check above says the booking is *possible*; none
+    # of them says the guest wants it. In the graph path that question is asked by
+    # `gate_node`, which interrupts and waits — but the chat path had no equivalent,
+    # so a model that decided a guest had agreed simply booked. "Shall I confirm?"
+    # answered in prose is the model's reading of consent, not consent.
+    #
+    # So the surface that can show a summary and two buttons asks for one. Only
+    # the app sets `confirm_in_ui`; the REPL and the tests keep the old path, where
+    # there is no button to press.
+    if session.confirm_in_ui and key not in session.reserved:
+        session.pending_reservation = {
+            "key": key,
+            "restaurant": rec["name"],
+            "address": rec.get("address"),
+            "date": iso,
+            "time": time,
+            "time_display": to_12h(time),
+            "party_size": party_size,
+            "guest_name": session.display_name,
+            "perk": rec.get("perk_title"),
+            "perk_sample": rec.get("perk_sample", False),
+            "special_requests": special,
+            "email": profile.get("email"),
+        }
+        session.trail.record("reservation_gate", actor="booker", stage="shown",
+                             restaurant=rec["name"], date=iso, time=time,
+                             party_size=party_size)
+        return json.dumps({
+            "status": "awaiting_confirmation",
+            "summary": session.pending_reservation,
+            "message": (
+                "NOT booked yet. The full details are on screen with a Reserve "
+                "button, and nothing is reserved until the guest presses it. Say "
+                "in one short line that you've put the details below for them to "
+                "confirm. Do NOT claim the table is booked, do NOT invent a "
+                "confirmation id, and do not call book_table again until they act."
+            ),
+        }, ensure_ascii=False)
+
+    session.pending_reservation = None  # the door is open; don't leave it showing
     booking = create_booking(
         place_id=place_id,
         restaurant_name=rec["name"],
@@ -1252,8 +1356,11 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
     booked_cuisine = _clean_cuisine(rec.get("cuisine")) or session.pending.get("cuisine")
     if booked_cuisine:
         signals["cuisines"] = [booked_cuisine]
-    if session.pending.get("location"):
-        signals["home_location"] = session.pending["location"]
+    # Curated, not quoted: what goes in the file is the place, not the sentence
+    # the guest happened to ask in. A phrase that names nowhere is simply dropped.
+    area = _clean_area(session.pending.get("location"))
+    if area:
+        signals["home_location"] = area
 
     conflicts = profile_memory.sticky_conflicts(session.profile, signals)
     learn = {k: v for k, v in signals.items() if k not in conflicts}
@@ -1638,6 +1745,36 @@ def _vetted(session: ConciergeSession, reply: str) -> str:
     if not verdict.grounded:
         session.trail.record("grounding", actor="dino", **verdict.as_audit())
     return verdict.reply
+
+
+def press_reserve(session: ConciergeSession) -> str:
+    """The guest pressed Reserve. Record the consent and say so in their own voice.
+
+    Returns the message to send as the guest's turn. The press is not applied
+    silently: it goes into the transcript, so the booking that follows is
+    answerable to something the guest actually did rather than to a flag.
+    """
+    pending = session.pending_reservation or {}
+    session.reserved.add(pending.get("key", ""))
+    session.pending_reservation = None
+    session.trail.record(
+        "reservation_gate", actor=None, stage="approved",
+        restaurant=pending.get("restaurant"), date=pending.get("date"),
+        time=pending.get("time"), party_size=pending.get("party_size"),
+    )
+    return "Yes — reserve it, please."
+
+
+def press_change_my_mind(session: ConciergeSession) -> str:
+    """The guest declined at the gate. Nothing is reserved, and the trail says so."""
+    pending = session.pending_reservation or {}
+    session.pending_reservation = None
+    session.trail.record(
+        "reservation_gate", actor=None, stage="declined",
+        restaurant=pending.get("restaurant"), date=pending.get("date"),
+        time=pending.get("time"),
+    )
+    return "Actually, hold on — I'd like to change something before we book."
 
 
 def start_session(member_id: str) -> ConciergeSession:

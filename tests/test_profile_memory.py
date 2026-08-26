@@ -531,6 +531,181 @@ def test_a_restaurant_with_no_places_photos_still_shows_what_the_web_found(monke
     assert session.media[-1]["images"][0]["source"] == "placeholder"
 
 
+def test_a_home_area_is_saved_as_a_place_not_as_a_sentence():
+    # Demo feedback: the guest's phrasing was going into their permanent file.
+    # "somewhere near soho" is a fine thing to say and a poor thing to remember.
+    import table_for_four.agent.concierge_chat as cc
+
+    assert cc._clean_area("somewhere near soho") == "Soho"
+    assert cc._clean_area("around midtown") == "Midtown"
+    assert cc._clean_area("  in the west village area ") == "The West Village"
+    assert cc._clean_area("close to Shibuya") == "Shibuya"
+
+
+def test_an_area_that_names_nowhere_is_not_saved():
+    # Worse than saving nothing: it comes back next visit as a fact about the
+    # guest, and "nearby" means nothing a month later in another conversation.
+    import table_for_four.agent.concierge_chat as cc
+
+    for junk in ("nearby", "close by", "here", "my place", "anywhere", "", "   ",
+                 "around here", "wherever"):
+        assert cc._clean_area(junk) is None, f"{junk!r} should not be filed"
+
+
+def test_a_places_own_capitalisation_survives():
+    # Title-casing "SoHo" or "NoMad" would quietly correct them into nonsense.
+    import table_for_four.agent.concierge_chat as cc
+
+    assert cc._clean_area("near SoHo") == "SoHo"
+    assert cc._clean_area("NoMad") == "NoMad"
+
+
+def test_the_remember_tool_curates_the_area_before_filing_it(monkeypatch):
+    import table_for_four.agent.concierge_chat as cc
+
+    saved: dict = {}
+    monkeypatch.setattr(cc.profile_memory, "remember",
+                        lambda _id, updates: saved.update(updates) or {})
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    cc._handle_remember(session, {"home_location": "somewhere around Brooklyn Heights"})
+    assert saved["home_location"] == "Brooklyn Heights"
+
+    saved.clear()
+    cc._handle_remember(session, {"home_location": "close by"})
+    assert "home_location" not in saved
+
+
+def test_a_booking_files_the_curated_area(monkeypatch):
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    remembered: dict = {}
+    _patch_booking(monkeypatch, remembered)
+    monkeypatch.setattr(cc, "place_photos", lambda refs: [])
+    monkeypatch.setattr(cc, "lookup_dining_highlights",
+                        lambda **k: {"source": "fixture", "highlights": [], "images": [], "citations": []})
+
+    session = _booking_session({})
+    session.pending["location"] = "somewhere near Soho"
+    _offered(session, party=6)
+    _json.loads(cc._handle_book(session, {
+        "place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 6,
+    }))
+
+    assert remembered["home_location"] == "Soho"
+
+
+# --- The reserve gate --------------------------------------------------------
+
+def _gate_session(monkeypatch):
+    import table_for_four.agent.concierge_chat as cc
+
+    called = {"n": 0}
+    monkeypatch.setattr(cc, "create_booking",
+                        lambda **k: called.__setitem__("n", called["n"] + 1) or {
+                            "booked": True, "confirmation_id": "TF4-0001", "booking": {}})
+    monkeypatch.setattr(cc.profile_memory, "remember", lambda *a, **k: {"email": "g@x.com"})
+    monkeypatch.setattr(cc, "place_photos", lambda refs: [])
+    monkeypatch.setattr(cc, "lookup_dining_highlights",
+                        lambda **k: {"source": "fixture", "highlights": [], "images": [], "citations": []})
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    session.confirm_in_ui = True
+    session.recommendations = {"p1": {"place_id": "p1", "name": "Osteria",
+                                      "cuisine": "italian", "perk_title": "Free dessert"}}
+    _offered(session, party=2)
+    return session, called
+
+
+def test_nothing_is_booked_until_the_guest_presses_reserve(monkeypatch):
+    # Demo feedback, and a gap: the M4 gate only ever covered the graph path. In
+    # chat, "shall I confirm?" answered in prose is the model's reading of
+    # consent, not consent, and the booking went straight through on its say so.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    session, called = _gate_session(monkeypatch)
+    args = {"place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 2}
+    out = _json.loads(cc._handle_book(session, args))
+
+    assert out["status"] == "awaiting_confirmation"
+    assert called["n"] == 0, "the ledger was written before anyone pressed anything"
+    assert "Do NOT claim the table is booked" in out["message"]
+    # The guest is shown what they are agreeing to, from the same dict the
+    # booking is built from, so the summary cannot drift from the booking.
+    summary = session.pending_reservation
+    assert summary["restaurant"] == "Osteria"
+    assert summary["time_display"] == "7 PM"
+    assert summary["party_size"] == 2
+    assert summary["perk"] == "Free dessert"
+
+
+def test_pressing_reserve_lets_the_booking_through(monkeypatch):
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    session, called = _gate_session(monkeypatch)
+    args = {"place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 2}
+    cc._handle_book(session, args)
+
+    said = cc.press_reserve(session)
+    assert "reserve it" in said.lower()          # it speaks as the guest
+    assert session.pending_reservation is None   # the card comes down
+
+    out = _json.loads(cc._handle_book(session, args))
+    assert out["status"] == "booked"
+    assert called["n"] == 1
+
+
+def test_changing_your_mind_books_nothing_and_leaves_the_gate_shut(monkeypatch):
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    session, called = _gate_session(monkeypatch)
+    args = {"place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 2}
+    cc._handle_book(session, args)
+    cc.press_change_my_mind(session)
+
+    assert session.pending_reservation is None
+    # And the model trying again does not get a free pass — it asks once more.
+    assert _json.loads(cc._handle_book(session, args))["status"] == "awaiting_confirmation"
+    assert called["n"] == 0
+
+
+def test_the_gate_is_recorded_in_the_governance_trail(monkeypatch):
+    import table_for_four.agent.concierge_chat as cc
+
+    session, _ = _gate_session(monkeypatch)
+    cc._handle_book(session, {"place_id": "p1", "date": FUTURE_DATE,
+                              "time": "19:00", "party_size": 2})
+    cc.press_reserve(session)
+
+    stages = [r.detail["stage"] for r in session.trail.of("reservation_gate")]
+    assert stages == ["shown", "approved"]
+
+
+def test_a_surface_with_no_button_keeps_the_old_path(monkeypatch):
+    # The REPL cannot show a Reserve button, and a gate nobody can answer is a
+    # dead end rather than a safeguard.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    session, called = _gate_session(monkeypatch)
+    session.confirm_in_ui = False
+    out = _json.loads(cc._handle_book(session, {
+        "place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 2,
+    }))
+
+    assert out["status"] == "booked"
+    assert called["n"] == 1
+
+
 def _booking_with_highlights(monkeypatch, highlights=None, images=None):
     """A booking session wired so book_table's automatic lookup is deterministic."""
     import table_for_four.agent.concierge_chat as cc

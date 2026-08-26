@@ -27,6 +27,8 @@ from table_for_four.agent.concierge_chat import (
     TOOL_SCHEMAS,
     ConciergeSession,
     _run_turn,
+    press_change_my_mind,
+    press_reserve,
     start_session,
     to_12h,
 )
@@ -197,6 +199,55 @@ def _render_media(items: list[dict[str, Any]]) -> None:
             st.caption(f"📸 {item.get('restaurant', 'Restaurant')} · {_provenance(item, images)}")
 
 
+def _reserve_gate(session: ConciergeSession) -> str | None:
+    """Show what is about to be booked, and wait to be told.
+
+    The last thing before an irreversible write, and the only place in the chat
+    surface where the guest's consent is a thing they *did* rather than a thing
+    the model read into a sentence. Everything shown here comes from the same
+    dict the booking is built from, so the summary cannot drift from the booking.
+    """
+    pending = session.pending_reservation
+    if not pending:
+        return None
+
+    rows = [
+        ("Restaurant", pending.get("restaurant")),
+        ("Where", pending.get("address")),
+        ("Date", pending.get("date")),
+        ("Time", pending.get("time_display") or pending.get("time")),
+        ("Party", f"{pending.get('party_size')} people"),
+        ("Under the name", pending.get("guest_name")),
+        ("Confirmation to", pending.get("email")),
+        ("Notes", pending.get("special_requests")),
+    ]
+    perk = pending.get("perk")
+    if perk:
+        rows.append(("Offer applied", perk + (" (sample)" if pending.get("perk_sample") else "")))
+
+    body = "".join(
+        f'<tr><td style="padding:2px 12px 2px 0;opacity:0.65;white-space:nowrap">{html.escape(label)}</td>'
+        f'<td style="padding:2px 0"><b>{html.escape(str(value))}</b></td></tr>'
+        for label, value in rows if value
+    )
+    st.markdown(
+        '<div style="border:1px solid rgba(128,128,128,0.35);border-radius:10px;'
+        'padding:12px 14px;margin:6px 0 10px">'
+        '<div style="font-size:0.95rem;margin-bottom:6px">🍽️ <b>Please confirm your reservation</b></div>'
+        f'<table style="font-size:0.88rem;border-collapse:collapse">{body}</table>'
+        '<div style="font-size:0.78rem;opacity:0.65;margin-top:8px">'
+        'Nothing is booked until you press Reserve.</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    left, right, _ = st.columns([1, 1, 2])
+    if left.button("✅ Reserve", key="gate-reserve", type="primary", use_container_width=True):
+        return press_reserve(session)
+    if right.button("↩️ Change my mind", key="gate-cancel", use_container_width=True):
+        return press_change_my_mind(session)
+    return None
+
+
 def _provenance(item: dict[str, Any], images: list[dict[str, Any]]) -> str:
     """Say where these photos actually came from.
 
@@ -324,6 +375,7 @@ def _time_chips(session: ConciergeSession) -> str | None:
 def _start(name: str) -> None:
     """Create a concierge session, get Dino's greeting, and store it in state."""
     session = start_session(name)
+    session.confirm_in_ui = True  # this surface can show a Reserve button
     session.messages.append(
         HumanMessage(content=f"(System: the guest '{name}' just connected. Greet them.)")
     )
@@ -389,9 +441,14 @@ def main() -> None:
             if msg.get("media"):
                 _render_media(msg["media"])
 
-    # Guest turn — typed, or tapped from the open times.
-    tapped = _time_chips(st.session_state.session)
-    if prompt := (tapped or st.chat_input("Message Dino…")):
+    # Guest turn — typed, tapped from the open times, or answered at the gate.
+    # The gate comes first: while a reservation is waiting on a decision, that is
+    # the only thing being asked, and offering times underneath it would confuse
+    # what the buttons apply to.
+    session_now: ConciergeSession = st.session_state.session
+    answered = _reserve_gate(session_now)
+    tapped = None if session_now.pending_reservation else _time_chips(session_now)
+    if prompt := (answered or tapped or st.chat_input("Message Dino…")):
         st.session_state.display.append({"role": "user", "content": prompt})
         with st.chat_message("user", avatar="🧑"):
             st.markdown(prompt)

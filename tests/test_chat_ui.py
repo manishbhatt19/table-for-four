@@ -97,3 +97,69 @@ def test_the_offer_is_spent_once_the_table_is_booked():
     at = _app(session).run()
 
     assert _chips(at) == []
+
+
+# --- The reserve gate --------------------------------------------------------
+
+def _awaiting(session: ConciergeSession) -> ConciergeSession:
+    session.confirm_in_ui = True
+    session.pending_reservation = {
+        "key": f"p1|{FUTURE_DATE}|19:00",
+        "restaurant": "Osteria", "address": "12 Greenwich Ave",
+        "date": FUTURE_DATE, "time": "19:00", "time_display": "7 PM",
+        "party_size": 2, "guest_name": "Sam", "email": "g@x.com",
+        "perk": "Free dessert", "perk_sample": False, "special_requests": None,
+    }
+    return session
+
+
+def test_the_guest_is_shown_what_they_are_about_to_book():
+    at = _app(_awaiting(_session_with_times())).run()
+
+    labels = [b.label for b in at.button]
+    assert "✅ Reserve" in labels
+    assert "↩️ Change my mind" in labels
+    # The details are on screen, not just in the model's prose.
+    page = " ".join(m.value for m in at.markdown)
+    for detail in ("Osteria", "7 PM", "Free dessert", "g@x.com"):
+        assert detail in page, f"{detail} was not shown before the irreversible step"
+    assert "Nothing is booked until you press Reserve" in page
+
+
+def test_the_open_times_step_aside_while_a_reservation_is_waiting():
+    # While a booking is waiting on a decision, that is the only thing being
+    # asked; time chips underneath would confuse what the buttons apply to.
+    at = _app(_awaiting(_session_with_times())).run()
+
+    assert _chips(at) == []
+
+
+def test_pressing_reserve_speaks_as_the_guest(monkeypatch):
+    import table_for_four.agent.concierge_chat as cc
+    from langchain_core.messages import HumanMessage
+
+    monkeypatch.setattr(cc, "_run_turn", lambda *_a, **_k: "Booked — see you Friday.")
+
+    session = _awaiting(_session_with_times())
+    at = _app(session)
+    at.run()
+    at.button(key="gate-reserve").click().run()
+
+    said = [m.content for m in session.messages if isinstance(m, HumanMessage)]
+    assert any("reserve it" in s.lower() for s in said)
+    assert session.pending_reservation is None
+    assert f"p1|{FUTURE_DATE}|19:00" in session.reserved
+
+
+def test_changing_your_mind_puts_the_card_away(monkeypatch):
+    import table_for_four.agent.concierge_chat as cc
+
+    monkeypatch.setattr(cc, "_run_turn", lambda *_a, **_k: "Of course — what shall we change?")
+
+    session = _awaiting(_session_with_times())
+    at = _app(session)
+    at.run()
+    at.button(key="gate-cancel").click().run()
+
+    assert session.pending_reservation is None
+    assert session.reserved == set()

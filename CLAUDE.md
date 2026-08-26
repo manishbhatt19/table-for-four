@@ -73,9 +73,12 @@ one awkward, that's a signal to stop, not to route around it.
 8. **Editing `roster/dino.md` breaks the golden test, on purpose.** Prompt changes
    are fine; they just have to be deliberate and land in their own commit, with
    `tests/golden/dino_system_prompt.txt` regenerated in the same one.
-9. **Nothing books without a human saying yes.** `gate_node` interrupts and the
-   run genuinely stops; only an explicit approval resumes it. `run_concierge`
-   has no default that books — no approver means declined. A convenient default
+9. **Nothing books without a human saying yes**, on both paths. In the graph,
+   `gate_node` interrupts and the run genuinely stops; only an explicit approval
+   resumes it, and `run_concierge` has no default that books. In chat, a session
+   with `confirm_in_ui` stops at `awaiting_confirmation` and the summary goes on
+   screen with Reserve / Change my mind — a prose "shall I confirm?" is the
+   model's reading of consent, not consent. A convenient default on either path
    would quietly undo the gate, so there isn't one.
 10. **The reply is checked, not just the action.** `_vetted` runs every reply
     through `governance.grounding` before the guest sees it: a time, date,
