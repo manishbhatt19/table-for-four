@@ -743,6 +743,57 @@ def test_a_surface_with_no_button_keeps_the_old_path(monkeypatch):
     assert called["n"] == 1
 
 
+def test_the_gate_asks_over_a_picture_of_the_place(monkeypatch):
+    # A table of eight rows is the honest thing to show before an irreversible
+    # write and the least appetising thing in the app. The moment of deciding is
+    # the moment a picture is worth most, so the gate carries one — and offline,
+    # with no photo to be had, it still does: the generated card needs no key.
+    import table_for_four.agent.concierge_chat as cc
+
+    session, _ = _gate_session(monkeypatch)
+    cc._handle_book(session, {"place_id": "p1", "date": FUTURE_DATE,
+                              "time": "19:00", "party_size": 2})
+
+    photo = session.pending_reservation["photo"]
+    assert photo["url"], "the guest was asked to confirm a spreadsheet"
+
+
+def test_the_gate_photo_reuses_what_the_guest_is_already_looking_at(monkeypatch):
+    # Cheapest source first: a photo fetched earlier this session costs nothing
+    # and is the one already on screen. Going back to Places for a second copy
+    # would spend an API call to show the guest the same restaurant twice.
+    import table_for_four.agent.concierge_chat as cc
+
+    session, _ = _gate_session(monkeypatch)
+    session.media.append({
+        "restaurant": "Osteria",
+        "images": [{"url": "https://img/osteria-1.jpg", "description": "The room"}],
+    })
+    monkeypatch.setattr(cc, "place_photos",
+                        lambda refs: pytest.fail("went to the web for a photo it had"))
+    cc._handle_book(session, {"place_id": "p1", "date": FUTURE_DATE,
+                              "time": "19:00", "party_size": 2})
+
+    assert session.pending_reservation["photo"]["url"] == "https://img/osteria-1.jpg"
+
+
+def test_the_model_is_never_handed_the_picture_it_may_not_paste(monkeypatch):
+    # The photo is for the guest's eyes. A signed image URL in the transcript is
+    # tokens spent on the one thing Dino is forbidden to repeat — and the obvious
+    # thing a model does with a URL in front of it is paste it.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    session, _ = _gate_session(monkeypatch)
+    out = _json.loads(cc._handle_book(session, {
+        "place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 2,
+    }))
+
+    assert "photo" not in out["summary"]
+    assert session.pending_reservation["photo"]["url"] not in _json.dumps(out)
+
+
 # --- One yes, asked where it can be answered ---------------------------------
 
 def test_the_web_surface_is_told_the_reserve_card_is_the_question(monkeypatch):

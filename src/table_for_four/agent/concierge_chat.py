@@ -1265,6 +1265,7 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
             "perk_sample": rec.get("perk_sample", False),
             "special_requests": special,
             "email": profile.get("email"),
+            "photo": _gate_photo(session, rec),
             # Exactly what was validated, kept so pressing Reserve replays this
             # booking rather than whatever the model reconstructs a turn later.
             "args": {**args, "place_id": place_id, "date": iso, "time": time,
@@ -1275,10 +1276,14 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
                              party_size=party_size)
         return json.dumps({
             "status": "awaiting_confirmation",
-            "summary": session.pending_reservation,
+            # The photo is for the guest's eyes, not the model's: a signed image
+            # URL in the transcript is tokens spent on something Dino is forbidden
+            # to repeat, and the one thing it might do with it is paste it.
+            "summary": {k: v for k, v in session.pending_reservation.items()
+                        if k != "photo"},
             "message": (
-                "NOT booked yet. The full details are on screen with a Reserve "
-                "button, and nothing is reserved until the guest presses it. Say "
+                "NOT booked yet. The full details are on screen with a photo and a "
+                "Reserve button, and nothing is reserved until the guest presses it. Say "
                 "in one short line that you've put the details below for them to "
                 "confirm. Do NOT claim the table is booked, do NOT invent a "
                 "confirmation id, and do not call book_table again until they act."
@@ -1468,6 +1473,44 @@ def _handle_cancel(session: ConciergeSession, args: dict[str, Any]) -> str:
         }, ensure_ascii=False)
 
     return json.dumps(result, ensure_ascii=False)  # already_cancelled | not_found
+
+
+def _gate_photo(session: ConciergeSession, rec: dict[str, Any]) -> dict[str, Any] | None:
+    """One picture to go with the question, at the moment it is asked.
+
+    A summary table is the honest thing to put in front of someone before an
+    irreversible write, and it is also the least appetising thing in the app:
+    nobody says yes to a spreadsheet. So the gate carries a single image of the
+    place. One, not a strip — the question on screen is "is this the table you
+    want?", and a gallery answers a different question.
+
+    Cheapest source first. Anything already fetched for this restaurant this
+    session costs nothing and is what the guest is already looking at; failing
+    that, one photo resolved against the place id, which is Curator's capability
+    and borrowed as Curator rather than reached for from behind the pass; failing
+    that — offline, no key — the generated card, which needs neither.
+    """
+    for item in reversed(session.media):
+        if item.get("restaurant") != rec["name"]:
+            continue
+        for img in item.get("images") or []:
+            return img
+        if item.get("card"):
+            return item["card"]
+
+    with roster.acting_as("curator"):
+        # One reference, one round trip. The gate is not the place to spend three.
+        photos = place_photos((session.photo_refs.get(rec.get("place_id")) or [])[:1])
+    if photos:
+        return photos[0]
+
+    return menu_card.card_for_restaurant(
+        restaurant=rec["name"],
+        cuisine=rec.get("cuisine"),
+        highlights=[],
+        perk=rec.get("perk_title"),
+        perk_is_sample=rec.get("perk_sample", False),
+    )
 
 
 def _show_highlights(

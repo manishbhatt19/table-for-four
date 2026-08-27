@@ -126,6 +126,30 @@ def test_the_guest_is_shown_what_they_are_about_to_book():
     assert "Nothing is booked until you press Reserve" in page
 
 
+def test_the_place_is_pictured_beside_the_question():
+    # The gate is where a guest decides, and a table of eight rows is a poor
+    # thing to decide over. Whatever picture the handler found goes next to it —
+    # a photograph cropped to its frame, the generated card at its own width.
+    session = _awaiting(_session_with_times())
+    session.pending_reservation["photo"] = {
+        "url": "https://img/osteria.jpg", "description": "Photo from Google Places",
+        "source": "google places",
+    }
+    at = _app(session).run()
+
+    page = " ".join(m.value for m in at.markdown)
+    assert "https://img/osteria.jpg" in page
+    assert "Photo from Google Places" in page, "an uncredited photograph of someone's room"
+
+
+def test_the_gate_still_stands_without_a_picture():
+    # Every photo source can come up empty, and a missing image is not a reason
+    # to lose the one screen where the booking can be refused.
+    at = _app(_awaiting(_session_with_times())).run()
+
+    assert "✅ Reserve" in [b.label for b in at.button]
+
+
 def test_the_open_times_step_aside_while_a_reservation_is_waiting():
     # While a booking is waiting on a decision, that is the only thing being
     # asked; time chips underneath would confuse what the buttons apply to.

@@ -235,9 +235,11 @@ def _reserve_gate(session: ConciergeSession) -> tuple[str, bool] | None:
     st.markdown(
         '<div style="border:1px solid rgba(128,128,128,0.35);border-radius:10px;'
         'padding:12px 14px;margin:6px 0 10px">'
-        '<div style="font-size:0.95rem;margin-bottom:6px">🍽️ <b>Please confirm your reservation</b></div>'
-        f'<table style="font-size:0.88rem;border-collapse:collapse">{body}</table>'
-        '<div style="font-size:0.78rem;opacity:0.65;margin-top:8px">'
+        '<div style="font-size:0.95rem;margin-bottom:8px">🍽️ <b>Please confirm your reservation</b></div>'
+        '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start">'
+        f'{_gate_art(pending)}'
+        f'<table style="font-size:0.88rem;border-collapse:collapse">{body}</table></div>'
+        '<div style="font-size:0.78rem;opacity:0.65;margin-top:10px">'
         'Nothing is booked until you press Reserve.</div></div>',
         unsafe_allow_html=True,
     )
@@ -250,6 +252,36 @@ def _reserve_gate(session: ConciergeSession) -> tuple[str, bool] | None:
     if right.button("↩️ Change my mind", key="gate-cancel", use_container_width=True):
         return press_change_my_mind(session), False
     return None
+
+
+def _gate_art(pending: dict[str, Any]) -> str:
+    """The one picture beside the details, sized for what it actually is.
+
+    A Places photo is a photograph and crops happily to a fixed frame; the
+    generated menu card is a wide 640px panel whose type becomes unreadable if
+    it's cropped to the same shape. Same slot, two shapes — and the credit line
+    stays under the photograph, because these are somebody's pictures.
+    """
+    photo = pending.get("photo") or {}
+    url = photo.get("url")
+    if not url:
+        return ""
+    alt = photo.get("description") or pending.get("restaurant") or "Restaurant"
+    if photo.get("source") == "menu card":
+        return (
+            f'<img src="{html.escape(url, quote=True)}" alt="{html.escape(alt)}" '
+            'style="flex:0 0 auto;width:100%;max-width:300px;height:auto;'
+            'border-radius:10px;display:block">'
+        )
+    return (
+        '<figure style="margin:0;flex:0 0 auto">'
+        f'<img src="{html.escape(url, quote=True)}" alt="{html.escape(alt)}" '
+        'style="width:200px;height:145px;object-fit:cover;border-radius:10px;'
+        'border:1px solid rgba(128,128,128,0.25);display:block">'
+        '<figcaption style="font-size:0.7rem;opacity:0.65;margin-top:3px;'
+        f'max-width:200px;line-height:1.3">{html.escape(_shorten(alt))}</figcaption>'
+        "</figure>"
+    )
 
 
 def _provenance(item: dict[str, Any], images: list[dict[str, Any]]) -> str:
