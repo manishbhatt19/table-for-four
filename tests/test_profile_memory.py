@@ -743,6 +743,38 @@ def test_a_surface_with_no_button_keeps_the_old_path(monkeypatch):
     assert called["n"] == 1
 
 
+# --- One yes, asked where it can be answered ---------------------------------
+
+def test_the_web_surface_is_told_the_reserve_card_is_the_question(monkeypatch):
+    # The guest was confirming the same table twice: once in prose because the
+    # brief told Dino to read the details back and get a yes, and once on the
+    # Reserve card, which is that same read-back with a button under it. The
+    # model cannot see which surface it is on, so it is told.
+    import table_for_four.agent.concierge_chat as cc
+
+    monkeypatch.setattr(cc.profile_memory, "load", lambda member_id: None)
+    session = cc.start_session("g@x.com", confirm_in_ui=True)
+
+    brief = session.messages[0].content
+    assert session.confirm_in_ui
+    assert "Reserve card" in brief
+    assert "Do not ask for a spoken yes" in brief
+
+
+def test_the_terminal_still_has_to_ask_out_loud(monkeypatch):
+    # And the other half of it: in the REPL there is no card, `book_table` books
+    # on the spot, and the spoken yes is the only gate there is. Dropping the
+    # question everywhere would have booked terminal guests without one.
+    import table_for_four.agent.concierge_chat as cc
+
+    monkeypatch.setattr(cc.profile_memory, "load", lambda member_id: None)
+    session = cc.start_session("g@x.com")
+
+    brief = session.messages[0].content
+    assert not session.confirm_in_ui
+    assert "get a spoken yes BEFORE calling it" in brief
+
+
 def _booking_with_highlights(monkeypatch, highlights=None, images=None):
     """A booking session wired so book_table's automatic lookup is deterministic."""
     import table_for_four.agent.concierge_chat as cc

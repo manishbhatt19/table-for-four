@@ -1817,7 +1817,7 @@ def press_change_my_mind(session: ConciergeSession) -> str:
     return "Actually, hold on — I'd like to change something before we book."
 
 
-def start_session(member_id: str) -> ConciergeSession:
+def start_session(member_id: str, confirm_in_ui: bool = False) -> ConciergeSession:
     """Build a session, load any saved profile, and seed the system prompt."""
     profile = profile_memory.load(member_id)
     session = ConciergeSession(
@@ -1825,6 +1825,22 @@ def start_session(member_id: str) -> ConciergeSession:
         profile=profile,
         # A recognized guest needs no "have we met?" — we already have their file.
         asked_returning=bool((profile or {}).get("email")),
+        confirm_in_ui=confirm_in_ui,
+    )
+    # Which surface this is decides where the guest's yes comes from, and the model
+    # has no way to see that for itself. Told here rather than hard-wired into the
+    # brief because the brief is one file serving both: on the web app the Reserve
+    # card is the question, so asking it in prose first makes the guest confirm the
+    # same table twice; in the terminal there is no card, so the spoken yes is the
+    # only gate there is and must still be asked for.
+    surface = (
+        "This surface shows a **Reserve card**: `book_table` will NOT book, it puts "
+        "the reservation on screen for the guest to press Reserve. Do not ask for a "
+        "spoken yes before calling it — the card is the ask (step 6a)."
+        if confirm_in_ui else
+        "This surface is a plain terminal with no Reserve card: `book_table` books "
+        "immediately. Read the details back and get a spoken yes BEFORE calling it "
+        "(step 6a)."
     )
     # Ground the model in the real date so it never invents a calendar date — it
     # should pass the guest's own wording ("Friday") and let the tools resolve it.
@@ -1833,6 +1849,7 @@ def start_session(member_id: str) -> ConciergeSession:
         f"Today is {today:%A}, {today.isoformat()}. When calling a tool that takes a "
         "date, pass the guest's own words (e.g. 'Friday', 'next Saturday'); the "
         "system resolves them against today. NEVER invent a specific calendar date.\n\n"
+        f"## This surface\n{surface}\n\n"
         "## This guest\n" + _profile_context(profile)
     )
     session.messages = [SystemMessage(content=SYSTEM_PROMPT + "\n\n## Context\n" + context)]

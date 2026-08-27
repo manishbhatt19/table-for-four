@@ -384,8 +384,7 @@ def _time_chips(session: ConciergeSession) -> str | None:
 
 def _start(name: str) -> None:
     """Create a concierge session, get Dino's greeting, and store it in state."""
-    session = start_session(name)
-    session.confirm_in_ui = True  # this surface can show a Reserve button
+    session = start_session(name, confirm_in_ui=True)  # this surface has a Reserve button
     session.messages.append(
         HumanMessage(content=f"(System: the guest '{name}' just connected. Greet them.)")
     )
