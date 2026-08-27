@@ -163,3 +163,73 @@ def test_changing_your_mind_puts_the_card_away(monkeypatch):
 
     assert session.pending_reservation is None
     assert session.reserved == set()
+
+
+def test_the_picker_goes_away_once_the_guest_has_named_a_time():
+    # Demo feedback: the picker kept reappearing turn after turn and felt like a
+    # loop. It used to stay up until a booking existed, which was a short window
+    # until the reserve gate put a confirmation step in the middle of it.
+    from langchain_core.messages import HumanMessage
+
+    session = _session_with_times()
+    session.messages = [HumanMessage(content="7pm please")]
+    at = _app(session).run()
+
+    assert _chips(at) == [], "they already answered; stop asking"
+
+
+def test_the_picker_stays_while_the_guest_has_not_answered():
+    from langchain_core.messages import HumanMessage
+
+    session = _session_with_times()
+    session.messages = [HumanMessage(content="somewhere nice for dinner")]
+    at = _app(session).run()
+
+    assert "7 PM" in _chips(at)
+
+
+def test_a_time_that_is_not_open_does_not_dismiss_the_picker():
+    # They asked for 9pm and it isn't free — that is exactly when they still need
+    # to see what is.
+    from langchain_core.messages import HumanMessage
+
+    session = _session_with_times(["18:00", "19:00"])
+    session.messages = [HumanMessage(content="9pm if you have it")]
+    at = _app(session).run()
+
+    assert _chips(at) == ["6 PM", "7 PM"]
+
+
+def test_after_reserve_the_guest_gets_the_confirmation_not_the_picker(monkeypatch):
+    # The other half of the same report: pressing Reserve handed back a time
+    # picker instead of the booking, its photos and the perk.
+    import table_for_four.agent.concierge_chat as cc
+
+    monkeypatch.setattr(cc, "create_booking",
+                        lambda **k: {"booked": True, "confirmation_id": "TF4-0001", "booking": {}})
+    monkeypatch.setattr(cc.profile_memory, "remember", lambda *a, **k: {"email": "g@x.com"})
+    monkeypatch.setattr(cc, "place_photos", lambda refs: [])
+    monkeypatch.setattr(cc, "lookup_dining_highlights", lambda **k: {
+        "source": "live", "citations": [],
+        "highlights": [{"title": "Osteria", "snippet": "The cacio e pepe.",
+                        "url": "https://guide.example/o"}],
+        "images": [{"url": "https://osteria.example/room.jpg", "source": "osteria.example"}],
+    })
+    monkeypatch.setattr(cc, "_run_turn", lambda *_a, **_k: "All set — see you Friday.")
+
+    session = _awaiting(_session_with_times())
+    session.recommendations = {"p1": {"place_id": "p1", "name": "Osteria",
+                                      "cuisine": "italian", "perk_title": "Free dessert"}}
+    session.pending_reservation["args"] = {
+        "place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 2,
+    }
+    at = _app(session)
+    at.run()
+    at.button(key="gate-reserve").click().run()
+
+    assert session.bookings, "Reserve did not produce a booking"
+    booked = next(iter(session.bookings.values()))
+    assert booked["confirmation_id"] == "TF4-0001"
+    assert booked["perk_applied"] == "Free dessert"
+    assert session.media, "the photos should be waiting with the confirmation"
+    assert _chips(at) == [], "a booked outing must not be offered times again"

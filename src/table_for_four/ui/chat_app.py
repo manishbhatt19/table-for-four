@@ -26,6 +26,7 @@ from table_for_four.agent.calendar_invite import build_ics, ics_filename
 from table_for_four.agent.concierge_chat import (
     TOOL_SCHEMAS,
     ConciergeSession,
+    _requested_times,
     _run_turn,
     press_change_my_mind,
     press_reserve,
@@ -199,7 +200,7 @@ def _render_media(items: list[dict[str, Any]]) -> None:
             st.caption(f"📸 {item.get('restaurant', 'Restaurant')} · {_provenance(item, images)}")
 
 
-def _reserve_gate(session: ConciergeSession) -> str | None:
+def _reserve_gate(session: ConciergeSession) -> tuple[str, bool] | None:
     """Show what is about to be booked, and wait to be told.
 
     The last thing before an irreversible write, and the only place in the chat
@@ -210,6 +211,7 @@ def _reserve_gate(session: ConciergeSession) -> str | None:
     pending = session.pending_reservation
     if not pending:
         return None
+    # Returns (what the guest said, was it already put in the transcript).
 
     rows = [
         ("Restaurant", pending.get("restaurant")),
@@ -242,9 +244,11 @@ def _reserve_gate(session: ConciergeSession) -> str | None:
 
     left, right, _ = st.columns([1, 1, 2])
     if left.button("✅ Reserve", key="gate-reserve", type="primary", use_container_width=True):
-        return press_reserve(session)
+        # Reserve books straight away and puts the guest's words in the transcript
+        # itself, so this one is already spoken by the time it comes back.
+        return press_reserve(session), True
     if right.button("↩️ Change my mind", key="gate-cancel", use_container_width=True):
-        return press_change_my_mind(session)
+        return press_change_my_mind(session), False
     return None
 
 
@@ -344,6 +348,12 @@ def _time_chips(session: ConciergeSession) -> str | None:
     # Once this outing is on the ledger the times are history, not an offer.
     if any(k.startswith(f"{pend.get('place_id')}|{pend.get('date')}|")
            for k in session.bookings):
+        return None
+    # And once the guest has named one of them, the picker has done its job. It
+    # used to stay up until a booking existed, which was a short window — until
+    # the reserve gate put a confirmation step in the middle, and a guest who had
+    # already answered watched the same question sit there turn after turn.
+    if _requested_times(session) & set(slots):
         return None
 
     where = (session.pending.get("restaurant")
@@ -446,7 +456,7 @@ def main() -> None:
     # the only thing being asked, and offering times underneath it would confuse
     # what the buttons apply to.
     session_now: ConciergeSession = st.session_state.session
-    answered = _reserve_gate(session_now)
+    answered, spoken = _reserve_gate(session_now) or (None, False)
     tapped = None if session_now.pending_reservation else _time_chips(session_now)
     if prompt := (answered or tapped or st.chat_input("Message Dino…")):
         st.session_state.display.append({"role": "user", "content": prompt})
@@ -454,7 +464,8 @@ def main() -> None:
             st.markdown(prompt)
 
         session: ConciergeSession = st.session_state.session
-        session.messages.append(HumanMessage(content=prompt))
+        if not spoken:
+            session.messages.append(HumanMessage(content=prompt))
         # Anything the web-highlights tool collects during this turn is new media.
         seen_media = len(session.media)
         with st.chat_message("assistant", avatar="🦖"):

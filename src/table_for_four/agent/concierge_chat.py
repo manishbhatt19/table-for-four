@@ -1265,6 +1265,10 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
             "perk_sample": rec.get("perk_sample", False),
             "special_requests": special,
             "email": profile.get("email"),
+            # Exactly what was validated, kept so pressing Reserve replays this
+            # booking rather than whatever the model reconstructs a turn later.
+            "args": {**args, "place_id": place_id, "date": iso, "time": time,
+                     "party_size": party_size},
         }
         session.trail.record("reservation_gate", actor="booker", stage="shown",
                              restaurant=rec["name"], date=iso, time=time,
@@ -1748,11 +1752,19 @@ def _vetted(session: ConciergeSession, reply: str) -> str:
 
 
 def press_reserve(session: ConciergeSession) -> str:
-    """The guest pressed Reserve. Record the consent and say so in their own voice.
+    """The guest pressed Reserve: record the consent, then make the booking.
 
-    Returns the message to send as the guest's turn. The press is not applied
-    silently: it goes into the transcript, so the booking that follows is
-    answerable to something the guest actually did rather than to a flag.
+    The press goes into the transcript in the guest's own voice, so the booking is
+    answerable to something they did. But the booking itself happens *here* rather
+    than by asking the model to call `book_table` again — the first version did
+    that, and when the model replied conversationally instead of calling the tool,
+    the press did nothing and the guest was handed back the time picker.
+
+    Nothing is being decided at this point. The guest approved these exact details
+    a moment ago; carrying them out is not a judgement, and a step with no judgement
+    in it should not depend on a model choosing to take it.
+
+    Appends the guest's message itself, so the caller must not append it again.
     """
     pending = session.pending_reservation or {}
     session.reserved.add(pending.get("key", ""))
@@ -1762,7 +1774,19 @@ def press_reserve(session: ConciergeSession) -> str:
         restaurant=pending.get("restaurant"), date=pending.get("date"),
         time=pending.get("time"), party_size=pending.get("party_size"),
     )
-    return "Yes — reserve it, please."
+
+    said = "Yes — reserve it, please."
+    session.messages.append(HumanMessage(content=said))
+    # `_dispatch`, not the handler directly: it runs Booker under its own grant and
+    # writes the tool call to the governance trail like any other.
+    result = _dispatch(session, "book_table", dict(pending.get("args") or {}))
+    session.messages.append(HumanMessage(content=(
+        "(System: the guest pressed Reserve, and book_table has already run. Its "
+        f"result: {result}\nWrite the confirmation now, in that order: what people "
+        "order there, a couple of practical tips, then the booking summary with the "
+        "perk named. Do not call book_table again.)"
+    )))
+    return said
 
 
 def press_change_my_mind(session: ConciergeSession) -> str:

@@ -643,10 +643,11 @@ def test_nothing_is_booked_until_the_guest_presses_reserve(monkeypatch):
     assert summary["perk"] == "Free dessert"
 
 
-def test_pressing_reserve_lets_the_booking_through(monkeypatch):
+def test_pressing_reserve_books_it_without_asking_the_model_again(monkeypatch):
     import json as _json
 
     import table_for_four.agent.concierge_chat as cc
+    from langchain_core.messages import HumanMessage
 
     session, called = _gate_session(monkeypatch)
     args = {"place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 2}
@@ -655,9 +656,20 @@ def test_pressing_reserve_lets_the_booking_through(monkeypatch):
     said = cc.press_reserve(session)
     assert "reserve it" in said.lower()          # it speaks as the guest
     assert session.pending_reservation is None   # the card comes down
+    # The press books. It does not ask the model to book: the first version did,
+    # and when the model answered conversationally instead of calling the tool,
+    # the press did nothing and the guest got handed back the time picker.
+    assert called["n"] == 1
+    assert session.bookings, "the press should have written the booking itself"
 
-    out = _json.loads(cc._handle_book(session, args))
-    assert out["status"] == "booked"
+    # And the model is handed the result rather than left to reconstruct it.
+    system_notes = [m.content for m in session.messages
+                    if isinstance(m, HumanMessage) and m.content.startswith("(System:")]
+    assert any("book_table has already run" in n for n in system_notes)
+    assert any("TF4-0001" in n for n in system_notes)
+
+    # Calling it again is idempotent, not a second table.
+    assert _json.loads(cc._handle_book(session, args))["status"] == "already_booked"
     assert called["n"] == 1
 
 
