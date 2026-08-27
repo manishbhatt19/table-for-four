@@ -1726,6 +1726,46 @@ def test_free_text_cuisine_is_cleaned_or_rejected():
     assert cc._clean_cuisine("") is None
 
 
+def test_a_dish_is_not_a_cuisine():
+    # Demo feedback: a guest who wanted chicken wings one evening had "chicken
+    # wings" read back to them as a favourite *cuisine* on the next visit. A dish
+    # is an order, not a taste — and no denylist was ever going to name them all,
+    # so the check is now "does this name a kitchen?" rather than "is this junk?".
+    import table_for_four.agent.concierge_chat as cc
+
+    for dish in ("chicken wings", "wings", "chicken tikka masala", "pad see ew",
+                 "cheesecake", "avocado toast", "the tasting menu"):
+        assert cc._clean_cuisine(dish) is None, dish
+
+    # Without dropping the styles a guest genuinely does dine by, including the
+    # ones Google hands back as a place type.
+    for cuisine in ("Vietnamese", "middle eastern", "SUSHI", "barbecue", "tapas",
+                    "soul food", "steakhouse", "vegan", "New American"):
+        assert cc._clean_cuisine(cuisine) is not None, cuisine
+
+
+def test_a_searched_dish_never_becomes_a_favourite_cuisine(monkeypatch):
+    # How it actually got in: the place came back generically typed, so the
+    # booking fell back to what the guest had searched for — and that fallback
+    # was the one path into the profile that skipped the cuisine filter.
+    import json as _json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    remembered: dict = {}
+    _patch_booking(monkeypatch, remembered)
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    session.recommendations = {"p1": {"place_id": "p1", "name": "Corner Table", "cuisine": None}}
+    session.pending["cuisine"] = "chicken wings"
+    _offered(session, party=4)
+    assert _json.loads(cc._handle_book(session, {
+        "place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 4,
+    }))["status"] == "booked"
+
+    assert "cuisines" not in remembered, "an order became a standing preference"
+
+
 def test_remember_refuses_a_venue_name_or_category_as_a_cuisine(monkeypatch):
     # The model sometimes offers the restaurant itself as the guest's taste. A name
     # is not a cuisine, and a guest must never be greeted with "you love Osteria!".
@@ -1738,8 +1778,12 @@ def test_remember_refuses_a_venue_name_or_category_as_a_cuisine(monkeypatch):
     session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
     _listed(session, name="Osteria Morini")
 
-    assert cc._handle_remember(session, {"cuisines": ["restaurant"]}) == "Nothing to save."
-    assert cc._handle_remember(session, {"cuisines": ["Osteria Morini"]}) == "Nothing to save."
+    for junk in ("restaurant", "Osteria Morini"):
+        said = cc._handle_remember(session, {"cuisines": [junk]})
+        assert said.startswith("Nothing to save.")
+        # And Dino is told why, so it doesn't promise a memory that was never
+        # filed — "I'll remember you love Osteria Morini!" against an empty field.
+        assert "isn't a cuisine" in said
     assert remembered == {}  # neither reached long-term memory
 
     cc._handle_remember(session, {"cuisines": ["Italian restaurant", "food"]})

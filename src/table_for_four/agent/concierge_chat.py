@@ -494,6 +494,50 @@ _TYPE_CUISINE_ALIASES = {
 # Trailing filler on a free-text cuisine: "thai food" / "italian restaurant".
 _CUISINE_FILLER = re.compile(r"\s*\b(restaurants?|food|cuisine|places?|spots?)\b\s*$")
 
+# What a cuisine actually is, listed out. The denylist above could only ever
+# catch what someone had thought to name, and a guest who asked for chicken
+# wings one evening had "chicken wings" read back to them as a favourite cuisine
+# on their next visit. A dish is not a taste, and there are more dishes than
+# anyone can enumerate — so the question is turned around: a value is kept only
+# if it names a kitchen. The list fails closed, which is the right direction for
+# a permanent file. Missing one costs a guest a preference they can restate;
+# admitting one puts a wrong fact about them on the record.
+#
+# Deliberately a list and not a judgement call for the model. "Is this a
+# cuisine?" has an exact answer, and this codebase checks those rather than
+# estimating them (see governance/grounding.py for the same reasoning).
+_CUISINES = {
+    # Kitchens by place — nationality, region, diaspora.
+    "afghan", "afghani", "african", "american", "andhra", "argentine", "argentinian",
+    "armenian", "asian", "australian", "austrian", "bangladeshi", "basque", "belgian",
+    "bolivian", "brazilian", "british", "bulgarian", "burmese", "cajun", "californian",
+    "cambodian", "cantonese", "caribbean", "catalan", "chilean", "chinese", "colombian",
+    "creole", "croatian", "cuban", "czech", "danish", "dominican", "dutch", "ecuadorian",
+    "egyptian", "english", "eritrean", "ethiopian", "european", "filipino", "finnish",
+    "french", "galician", "georgian", "german", "ghanaian", "greek", "gujarati",
+    "haitian", "hakka", "hawaiian", "hunan", "hungarian", "iberian", "icelandic",
+    "indian", "indonesian", "iranian", "iraqi", "irish", "israeli", "italian",
+    "jamaican", "japanese", "jewish", "kenyan", "korean", "latin", "latin american",
+    "lebanese", "levantine", "malaysian", "mediterranean", "mexican", "middle eastern",
+    "modern american", "modern australian", "modern british", "modern european",
+    "mongolian", "moroccan", "nepalese", "nepali", "new american", "nigerian", "nordic",
+    "north indian", "norwegian", "oaxacan", "pakistani", "palestinian", "pan asian",
+    "peruvian", "persian", "polish", "portuguese", "puerto rican", "romanian",
+    "russian", "salvadoran", "scandinavian", "scottish", "senegalese", "serbian",
+    "shanghainese", "sichuan", "sicilian", "singaporean", "slovak", "somali",
+    "south african", "south indian", "southern", "soul", "spanish", "sri lankan",
+    "swedish", "swiss", "syrian", "szechuan", "taiwanese", "thai", "tibetan",
+    "trinidadian", "tunisian", "turkish", "tuscan", "ukrainian", "uruguayan",
+    "uyghur", "venezuelan", "vietnamese", "welsh", "west african", "yemeni",
+    # Kitchens by style — how a place cooks, not one thing it serves.
+    "barbecue", "bbq", "burger", "burgers", "chophouse", "comfort", "comfort food",
+    "deli", "delicatessen", "dim sum", "fondue", "gastropub", "halal", "hot pot",
+    "izakaya", "kebab", "kosher", "noodle", "noodles", "pasta", "pizza", "poke",
+    "raclette", "ramen", "rotisserie", "seafood", "smokehouse", "soul food",
+    "steakhouse", "street food", "sushi", "taco", "tacos", "tapas", "teppanyaki",
+    "trattoria", "vegan", "vegetarian", "yakitori",
+}
+
 
 def _norm_text(value: Any) -> str:
     """Lowercase, punctuation-free, single-spaced — for comparing labels."""
@@ -544,12 +588,19 @@ def _clean_area(value: Any) -> str | None:
 
 
 def _clean_cuisine(value: Any) -> str | None:
-    """A cuisine label, or None if the text doesn't actually name a cuisine."""
+    """A cuisine label, or None if the text doesn't actually name a cuisine.
+
+    Checked against `_CUISINES` rather than merely against the things we know
+    aren't one: "chicken wings" is nobody's cuisine, and no denylist was ever
+    going to have it on it.
+    """
     label = _norm_text(value)
     if not label or label in _NOT_A_CUISINE:
         return None
     label = _CUISINE_FILLER.sub("", label).strip() or label
-    return None if label in _NOT_A_CUISINE else label
+    if label in _NOT_A_CUISINE:
+        return None
+    return label if label in _CUISINES else None
 
 
 def _cuisine_from_place_type(primary_type: str | None) -> str | None:
@@ -636,8 +687,16 @@ def _curated(session: ConciergeSession, args: dict[str, Any]) -> dict[str, Any]:
 
 def _handle_remember(session: ConciergeSession, args: dict[str, Any]) -> str:
     updates = _curated(session, args)
+    # A cuisine that didn't survive curation has to be said out loud, or Dino
+    # promises a memory that was never filed: "I'll remember you love chicken
+    # wings", against a field that stayed empty.
+    refused = (
+        " NOT saved: what they named isn't a cuisine — it's a dish, a venue or a "
+        "category. Don't tell them you'll remember it as a favourite cuisine."
+        if args.get("cuisines") and "cuisines" not in updates else ""
+    )
     if not updates:
-        return "Nothing to save."
+        return "Nothing to save." + refused
 
     # Standing preferences (home area, usual party size, the cuisine top three) are
     # never overwritten by a passing mention — the guest has to agree to the change.
@@ -646,14 +705,14 @@ def _handle_remember(session: ConciergeSession, args: dict[str, Any]) -> str:
     if allowed:
         session.profile = profile_memory.remember(session.member_id, allowed)
     if not blocked:
-        return "Saved: " + ", ".join(sorted(allowed))
+        return "Saved: " + ", ".join(sorted(allowed)) + refused
 
     _offer_preference_changes(session, blocked)
     return json.dumps({
         "status": "saved_with_confirmation_needed",
         "saved": sorted(allowed),
         "not_saved": blocked,
-        "message": (
+        "message": refused + (
             "The fields in `not_saved` are STANDING preferences with a different "
             "value already on file, so they were left unchanged. Ask the guest once, "
             "lightly, whether they'd like the saved value updated. If they clearly "
@@ -1361,8 +1420,11 @@ def _handle_book(session: ConciergeSession, args: dict[str, Any]) -> str:
     # those become a question for the guest (step 7b) rather than a silent update.
     signals: dict[str, Any] = {"party_size": party_size}
     # The place's own type first (it's what they actually ate), falling back to the
-    # cuisine the guest searched for when Google only says "restaurant".
-    booked_cuisine = _clean_cuisine(rec.get("cuisine")) or session.pending.get("cuisine")
+    # cuisine the guest searched for when Google only says "restaurant". Both go
+    # through the same filter: the fallback used to skip it, which is how a search
+    # phrase — "chicken wings" — ended up on file as a favourite cuisine.
+    booked_cuisine = next(iter(_clean_cuisines(
+        session, [rec.get("cuisine"), session.pending.get("cuisine")])), None)
     if booked_cuisine:
         signals["cuisines"] = [booked_cuisine]
     # Curated, not quoted: what goes in the file is the place, not the sentence
