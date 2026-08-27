@@ -232,4 +232,12 @@ def test_after_reserve_the_guest_gets_the_confirmation_not_the_picker(monkeypatc
     assert booked["confirmation_id"] == "TF4-0001"
     assert booked["perk_applied"] == "Free dessert"
     assert session.media, "the photos should be waiting with the confirmation"
+
+    # And they have to actually reach the reply. The media watermark used to be
+    # taken after the gate had already run, so the photos a booking collected
+    # counted as old and were dropped — a confirmed table with no pictures.
+    last = at.session_state["display"][-1]
+    assert last["role"] == "assistant"
+    assert last["media"], "the confirmation went out without its photos"
+    assert last["media"][0]["images"][0]["url"] == "https://osteria.example/room.jpg"
     assert _chips(at) == [], "a booked outing must not be offered times again"

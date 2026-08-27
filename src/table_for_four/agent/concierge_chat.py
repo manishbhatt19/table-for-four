@@ -1780,11 +1780,27 @@ def press_reserve(session: ConciergeSession) -> str:
     # `_dispatch`, not the handler directly: it runs Booker under its own grant and
     # writes the tool call to the governance trail like any other.
     result = _dispatch(session, "book_table", dict(pending.get("args") or {}))
+    # The order here is the guest's, not the data model's. Before the gate, the
+    # food led and the summary closed; now they have just pressed a button and the
+    # first thing they want is to be told it worked.
     session.messages.append(HumanMessage(content=(
-        "(System: the guest pressed Reserve, and book_table has already run. Its "
-        f"result: {result}\nWrite the confirmation now, in that order: what people "
-        "order there, a couple of practical tips, then the booking summary with the "
-        "perk named. Do not call book_table again.)"
+        "(System: the guest pressed Reserve. `book_table` has ALREADY run and the "
+        "table is booked — do NOT call it again, and do not ask them to confirm "
+        f"anything else.\n\nResult:\n{result}\n\n"
+        "Write the confirmation reply now, warmly, in this order:\n"
+        "1. Say plainly that it is booked, with the restaurant, the date, the time "
+        "(as '7 PM', not 19:00) and the party size.\n"
+        "2. If `perk_applied` is set, name that perk and say it has been applied — "
+        "it is why they chose this table, and leaving it out reads as though it "
+        "quietly didn't.\n"
+        "3. One line on what people order there, taken from `dining_highlights` and "
+        "attributed ('diners keep mentioning…'). If there is nothing there, say the "
+        "menu wasn't published online rather than inventing a dish.\n"
+        "4. Two short practical tips — arriving a few minutes early, giving the "
+        "reservation name, mentioning any dietary need or the perk at the table.\n"
+        "5. The confirmation id, and that it has been emailed to them.\n\n"
+        "Photos and a menu card are already on screen below your reply. Never paste "
+        "image URLs.)"
     )))
     return said
 

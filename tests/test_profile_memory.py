@@ -665,8 +665,10 @@ def test_pressing_reserve_books_it_without_asking_the_model_again(monkeypatch):
     # And the model is handed the result rather than left to reconstruct it.
     system_notes = [m.content for m in session.messages
                     if isinstance(m, HumanMessage) and m.content.startswith("(System:")]
-    assert any("book_table has already run" in n for n in system_notes)
-    assert any("TF4-0001" in n for n in system_notes)
+    note = next(n for n in system_notes if "book_table" in n)
+    assert "already run" in note.lower(), "the model must know the table is taken"
+    assert "TF4-0001" in note, "and be handed the result rather than fetching it"
+    assert "perk_applied" in note, "so the perk reaches the guest"
 
     # Calling it again is idempotent, not a second table.
     assert _json.loads(cc._handle_book(session, args))["status"] == "already_booked"
@@ -687,6 +689,29 @@ def test_changing_your_mind_books_nothing_and_leaves_the_gate_shut(monkeypatch):
     # And the model trying again does not get a free pass — it asks once more.
     assert _json.loads(cc._handle_book(session, args))["status"] == "awaiting_confirmation"
     assert called["n"] == 0
+
+
+def test_the_confirmation_reply_survives_the_grounding_check(monkeypatch):
+    # A quiet way to lose the confirmation: the reply is full of exactly what the
+    # grounding check removes — a confirmation id, a time, a date. All three have
+    # to be grounded by the booking itself, or pressing Reserve would produce a
+    # reply with its best sentences stripped out.
+    import table_for_four.agent.concierge_chat as cc
+
+    session, _ = _gate_session(monkeypatch)
+    session.pending["party_size"] = 2
+    cc._handle_book(session, {"place_id": "p1", "date": FUTURE_DATE,
+                              "time": "19:00", "party_size": 2})
+    session.pending_reservation["args"] = {
+        "place_id": "p1", "date": FUTURE_DATE, "time": "19:00", "party_size": 2,
+    }
+    cc.press_reserve(session)
+
+    reply = (
+        f"You're booked! Osteria on {FUTURE_DATE} at 7 PM for 2. "
+        "Your free dessert is applied. Confirmation TF4-0001, sent to g@x.com."
+    )
+    assert cc._vetted(session, reply) == reply, "the confirmation was stripped"
 
 
 def test_the_gate_is_recorded_in_the_governance_trail(monkeypatch):

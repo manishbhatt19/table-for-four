@@ -456,6 +456,11 @@ def main() -> None:
     # the only thing being asked, and offering times underneath it would confuse
     # what the buttons apply to.
     session_now: ConciergeSession = st.session_state.session
+    # Watermark the media before the gate, not after. Pressing Reserve books
+    # immediately and gathers the restaurant's photos on the way out, so a mark
+    # taken further down counts them as already-seen and silently drops them —
+    # which is exactly how a confirmed booking arrived with no pictures.
+    seen_media = len(session_now.media)
     answered, spoken = _reserve_gate(session_now) or (None, False)
     tapped = None if session_now.pending_reservation else _time_chips(session_now)
     if prompt := (answered or tapped or st.chat_input("Message Dino…")):
@@ -466,8 +471,6 @@ def main() -> None:
         session: ConciergeSession = st.session_state.session
         if not spoken:
             session.messages.append(HumanMessage(content=prompt))
-        # Anything the web-highlights tool collects during this turn is new media.
-        seen_media = len(session.media)
         with st.chat_message("assistant", avatar="🦖"):
             with st.spinner("Dino is thinking…"):
                 reply = _run_turn(session, st.session_state.llm)
