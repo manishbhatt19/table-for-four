@@ -124,7 +124,8 @@ in sync with the ledger.
 The perks layer is a hybrid RAG over a synthetic offers store (10 restaurants, 24
 perks): semantic vector search (local MiniLM embeddings in Chroma) blended with
 structured metadata + time filters, re-ranked by a tunable `semantic_weight`. It's
-both **evaluated** and **inspectable** — see [docs/week3_rag.md](docs/week3_rag.md).
+both **evaluated** and **inspectable** — the eval harness and the inspector below
+are the evidence, and both run offline.
 
 ```bash
 uv run python -m table_for_four.mcp_servers.perks.eval                       # hit@k / precision / MRR

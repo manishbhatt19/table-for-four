@@ -9,8 +9,8 @@
 > inspectable; nothing described below is a plan.
 
 A note on the word, because the repo uses it twice. **This** harness is the
-development-time one: how Claude Code is configured to work on the project.
-`docs/week4_agentic_harness.md` describes a different thing — a roster of declared
+development-time one: how Claude Code is configured to work on the project. The
+week 4 submission used the word for a different thing — a roster of declared
 units *inside* the product, at runtime — which has since shipped as
 `src/table_for_four/agent/roster/`: five units, each a `.md` declaring what it may
 touch, enforced at the tool registry.
@@ -85,7 +85,7 @@ reaches around `sticky_conflicts` or a new cuisine source that skips
 `_clean_cuisines`. Findings are reported as the guest scenario they produce.
 
 **`submission-doc`** (`Read, Grep, Glob, Write, Edit, Bash` — opus). The only one
-that writes. It encodes the house style for `docs/weekN_*.md` — title block, framing
+that writes. It encodes the house style for a submission document — title block, framing
 blockquote, numbered sections, claims checkable by opening the file, unbuilt things
 marked plainly — and the headless-Chrome PDF pipeline, including the instruction to
 verify the rendered PDF rather than trust it, and to check the dash convention

@@ -11,8 +11,9 @@ rather than flattening it into generic technical prose.
 
 ## House style
 
-Read a recent one before writing (`docs/week3_rag.md`,
-`docs/week4_tree_of_thought.md`) and follow its shape:
+The earlier submissions live outside the repo now, in the coursework folder at
+`Downloads/Manish CMU/weeklyassignments`. Read a recent one before writing if it is
+reachable, and either way follow this shape:
 
 - **Title block**: `# Table for Four — <Topic>`, then the course/week line and
   `**Author:** Manish Bhatt`.

@@ -9,8 +9,9 @@ than documentation *about* the model.
 
 **No unit here gets a model.** Dino is still the only thing in the system that
 talks to an LLM (`_run_turn`, two call sites). The roster costs one file read per
-unit at import and one set lookup per tool call — see `docs/week4_agentic_harness.md`
-for why a sub-agent with its own model would have been a pure cost increase.
+unit at import and one set lookup per tool call, which is the whole point: a
+sub-agent with its own model would have been a pure cost increase, buying
+judgement on questions that already have exact answers from tool calls.
 
 Two things this gives us that comments could not:
 

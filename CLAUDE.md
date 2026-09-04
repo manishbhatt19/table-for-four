@@ -96,9 +96,10 @@ one awkward, that's a signal to stop, not to route around it.
   `test_merely_naming_an_area_is_not_permission_to_change_it`. Deterministic and
   offline: monkeypatch `profile_memory.remember`, patch `search_restaurants`,
   never call a real model.
-- **Docs are weekly submissions.** `docs/weekN_<topic>.md`, with a title block
-  (course, week, author), a framing blockquote, numbered sections, and a PDF
-  alongside. Grounded in the working code, argued rather than asserted.
+- **Docs argue, they don't assert.** A title block, a framing blockquote, numbered
+  sections, grounded in the working code. The weekly course submissions were
+  written this way and have since moved out of the repo to the coursework folder;
+  what stays here is documentation of the system, not of the program.
 - **Commits** describe the guest-visible change and why it mattered, not the files
   touched.
 
@@ -108,8 +109,9 @@ one awkward, that's a signal to stop, not to route around it.
   (`python -m table_for_four`, `python -m table_for_four.mcp_servers.perks.eval`) —
   the pre-restructure short forms were cleaned out; don't reintroduce them.
 - `_run_turn` is the only place the chat path calls a model (two call sites, bounded
-  by `MAX_TOOL_HOPS = 6`). Keep it that way — see `docs/week4_tree_of_thought.md`
-  for why added model calls are a design regression here, not an upgrade.
+  by `MAX_TOOL_HOPS = 6`). Keep it that way: added model calls are a design
+  regression here, not an upgrade, because the hard constraints all have exact
+  answers from tool calls and a second model would only estimate them.
 - Chroma stores are on disk beside their server. Tests use ephemeral clients; if a
   test starts depending on demo data, it's wrong.
 - `.env` holds live API keys. Read `.env.example` instead — a hook blocks the real one.
@@ -118,10 +120,10 @@ one awkward, that's a signal to stop, not to route around it.
 
 M1–M3.6 shipped (search, booking, perks RAG, orchestrator, Dino, web highlights),
 plus the week 4 harness: `agent/roster/` — five declared units, enforced grants, and
-`actors` on the audit line, at zero added model cost (`docs/week4_agentic_harness.md`
-§11 records the measurements and the one place the plan gave way to the code).
-`docs/week4_tree_of_thought.md` is the reasoned decision *against* tree search and
-stays a decision, not a build.
+`actors` on the audit line, at zero added model cost: the golden prompt test and the
+tool-schema budget test are what hold that cost invariant in place. Tree search was
+considered for the reasoning layer and rejected on the grounds above; that decision
+stands and is not a pending build.
 
 **M4 shipped** — `src/table_for_four/governance/`:
 

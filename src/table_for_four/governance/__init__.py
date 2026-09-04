@@ -9,6 +9,6 @@ What none of them cover is the **reply**. A handler can refuse to book a table
 at a time nobody offered; nothing stops the sentence "how does 7pm sound?" from
 reaching the guest. `grounding` is that check, and it is deliberately code
 rather than a second model: a claim with an exact answer should be checked, not
-estimated — the same argument `docs/week4_tree_of_thought.md` §3.4 makes about
+estimated — the same argument the week 4 reasoning decision makes about
 constraints, applied one layer out.
 """

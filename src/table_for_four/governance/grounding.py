@@ -9,7 +9,7 @@ has never been checked at all.
 
 This module checks it, and does so in code rather than with a second model. Three
 of the four things it looks for have exact answers already sitting in session
-state, and `docs/week4_tree_of_thought.md` §3.4 makes the argument for that case:
+state, and the week 4 reasoning decision makes the argument for that case:
 a claim with a deterministic checker should be checked, not estimated — cheaper,
 exact, auditable, and it cannot itself hallucinate. It also costs no API key,
 which keeps the offline demo whole.
