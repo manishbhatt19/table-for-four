@@ -189,17 +189,19 @@ def test_changing_your_mind_puts_the_card_away(monkeypatch):
     assert session.reserved == set()
 
 
-def test_the_picker_goes_away_once_the_guest_has_named_a_time():
-    # Demo feedback: the picker kept reappearing turn after turn and felt like a
-    # loop. It used to stay up until a booking existed, which was a short window
-    # until the reserve gate put a confirmation step in the middle of it.
+def test_the_other_times_stay_tappable_after_the_guest_names_one():
+    # Demo feedback: a guest who said "7pm" stopped being shown buttons, so the
+    # alternatives came back as prose — a list to read where a moment before there
+    # were times to tap. They stay, relabelled: their time stands, the rest are
+    # there to look over.
     from langchain_core.messages import HumanMessage
 
     session = _session_with_times()
     session.messages = [HumanMessage(content="7pm please")]
     at = _app(session).run()
 
-    assert _chips(at) == [], "they already answered; stop asking"
+    assert "7 PM" in _chips(at)
+    assert any("only if you'd like to change it" in c.value for c in at.caption)
 
 
 def test_the_picker_stays_while_the_guest_has_not_answered():

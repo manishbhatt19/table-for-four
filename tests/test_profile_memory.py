@@ -942,10 +942,11 @@ def test_booker_still_cannot_reach_the_web_on_its_own():
             TOOLS["lookup_dining_highlights"](restaurant_name="Osteria")
 
 
-def test_a_time_the_guest_already_asked_for_is_not_put_back_to_them(monkeypatch):
-    # Demo feedback: the guest says "7pm", it's free, and Dino reads the whole
-    # list back and asks them to choose. They already chose. Asking again is the
-    # same failure as offering a shortlist to someone who named the restaurant.
+def test_a_time_the_guest_already_asked_for_is_confirmed_before_anything_else(monkeypatch):
+    # Demo feedback, twice over. First: the guest says "7pm", it's free, and Dino
+    # reads the whole list back and asks them to choose — they already chose.
+    # Then: withholding the other times fixed the asking and lost the choosing,
+    # so now the list stays and the reply has to open by saying their time is free.
     import json as _json
 
     import table_for_four.agent.concierge_chat as cc
@@ -962,20 +963,18 @@ def test_a_time_the_guest_already_asked_for_is_not_put_back_to_them(monkeypatch)
     out = _json.loads(cc._handle_times(session, {"place_id": "p1", "date": FUTURE_DATE}))
 
     assert out["guest_already_chose"] == "7 PM"
-    # Telling the model not to read the list back didn't hold — it still did. So
-    # the list isn't there to read: their time is the only one in the payload.
-    assert out["available_times"] == ["19:00"]
-    assert out["available_times_display"] == ["7 PM"]
+    # The alternatives are theirs to see — what stung was being asked to pick
+    # again, not being shown what else was open.
+    assert out["available_times"] == ["18:00", "19:00", "20:00"]
     assert out["other_times_open"] == 2
-    assert "photos" in out["instruction"]  # spend the spare question on something useful
-    # The full set stays on the session, or the booking guard would refuse a slot
-    # the guest could legitimately switch to.
+    assert "IS free" in out["instruction"]          # lead with their time
+    assert "look them over" in out["instruction"]   # the rest are an offer, not a question
     assert session.availability["slots"] == ["18:00", "19:00", "20:00"]
 
 
-def test_asking_what_else_is_open_gets_a_real_answer(monkeypatch):
-    # The shortcut fires once per restaurant and date. If the guest does want the
-    # alternatives, the next call has to come back with all of them.
+def test_the_guests_own_time_is_confirmed_however_often_they_ask(monkeypatch):
+    # This used to fire once per restaurant and date, so a second look at the
+    # times dropped the acknowledgement and went back to asking them to choose.
     import json as _json
 
     import table_for_four.agent.concierge_chat as cc
@@ -992,9 +991,8 @@ def test_asking_what_else_is_open_gets_a_real_answer(monkeypatch):
     first = _json.loads(cc._handle_times(session, {"place_id": "p1", "date": FUTURE_DATE}))
     second = _json.loads(cc._handle_times(session, {"place_id": "p1", "date": FUTURE_DATE}))
 
-    assert first["available_times"] == ["19:00"]
-    assert second["available_times"] == ["18:00", "19:00", "20:00"]
-    assert "guest_already_chose" not in second
+    assert first["available_times"] == second["available_times"] == ["18:00", "19:00", "20:00"]
+    assert second["guest_already_chose"] == "7 PM"
 
 
 def test_times_are_spoken_the_way_a_guest_says_them(monkeypatch):
@@ -1748,6 +1746,53 @@ def test_a_dish_is_not_a_cuisine():
     for cuisine in ("Vietnamese", "middle eastern", "SUSHI", "barbecue", "tapas",
                     "soul food", "steakhouse", "vegan", "New American"):
         assert cc._clean_cuisine(cuisine) is not None, cuisine
+
+
+def test_a_dish_is_filed_as_the_kitchen_behind_it(monkeypatch):
+    # Demo feedback: "burgers tonight" came back next visit as a favourite
+    # cuisine of burgers. It's a real kitchen — American — so the answer isn't to
+    # refuse it like chicken wings, it's to file what they actually like.
+    import table_for_four.agent.concierge_chat as cc
+
+    remembered: dict = {}
+    monkeypatch.setattr(cc.profile_memory, "remember",
+                        lambda _id, updates: remembered.update(updates) or {})
+
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    said = cc._handle_remember(session, {"cuisines": ["burgers"]})
+
+    assert remembered["cuisines"] == ["american"]
+    # And Dino is told, or it promises the guest a memory of "burgers" against a
+    # file that reads "american".
+    assert "Filed as american" in said
+
+    for dish, kitchen in (("sushi", "japanese"), ("Pizza", "italian"),
+                          ("tacos", "mexican"), ("ramen", "japanese")):
+        assert cc._clean_cuisines(session, [dish]) == [kitchen], dish
+
+    # A kitchen already named as one is left exactly as the guest said it, and
+    # the ambiguous styles aren't resolved by guessing.
+    for kept in ("thai", "steakhouse", "seafood", "vegan", "noodles"):
+        assert cc._clean_cuisines(session, [kept]) == [kept], kept
+
+
+def test_the_search_still_runs_on_the_word_the_guest_used(monkeypatch):
+    # The translation belongs to the profile, not to the search: asking Google for
+    # "american" when someone wanted a burger fetches the wrong places entirely.
+    import table_for_four.agent.concierge_chat as cc
+
+    seen: dict = {}
+
+    def _search(**kwargs):
+        seen.update(kwargs)
+        return {"results": []}
+
+    monkeypatch.setattr(cc, "search_restaurants", _search)
+    session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com"})
+    cc._handle_recommend(session, {"cuisine": "burgers", "location": "Soho"})
+
+    assert seen["cuisine"] == "burgers"
+    assert session.pending["cuisine"] == "burgers"
 
 
 def test_a_searched_dish_never_becomes_a_favourite_cuisine(monkeypatch):

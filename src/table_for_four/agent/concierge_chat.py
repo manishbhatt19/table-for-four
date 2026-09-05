@@ -300,7 +300,6 @@ class ConciergeSession:
     # recapping the times of a restaurant discussed ten turns ago is legitimate.
     offered_times: set[str] = field(default_factory=set)
     offered_dates: set[str] = field(default_factory=set)
-    time_shortcuts: set[str] = field(default_factory=set)           # place|date already confirmed straight through
     # The reserve gate. `confirm_in_ui` is set only by a surface that can actually
     # show a button; without one the old path stands, because a gate nobody can
     # answer is a dead end rather than a safeguard.
@@ -539,6 +538,42 @@ _CUISINES = {
 }
 
 
+# A dish is how a guest asks; a kitchen is what they like. "Burgers tonight" is a
+# perfectly good request and a poor thing to have read back next visit as a
+# favourite cuisine — they said what they fancied that evening, not what they
+# love. So the ask is translated on its way to the file: the search still runs on
+# the guest's own word, and only the permanent record gets the kitchen behind it.
+#
+# Only unambiguous ones are here. "Noodles" could be half of Asia and "seafood"
+# is nobody's nationality; those stay as they are rather than being resolved by a
+# guess. Same direction of failure as the list above — an untranslated taste is a
+# slightly odd line in a profile, an invented one is a wrong fact about someone.
+_KITCHEN_BEHIND_THE_DISH = {
+    "bbq": "barbecue",
+    "burger": "american",
+    "burgers": "american",
+    "cheeseburger": "american",
+    "cheeseburgers": "american",
+    "dim sum": "chinese",
+    "fondue": "swiss",
+    "hot pot": "chinese",
+    "izakaya": "japanese",
+    "kebab": "middle eastern",
+    "pasta": "italian",
+    "pizza": "italian",
+    "poke": "hawaiian",
+    "raclette": "swiss",
+    "ramen": "japanese",
+    "sushi": "japanese",
+    "taco": "mexican",
+    "tacos": "mexican",
+    "tapas": "spanish",
+    "teppanyaki": "japanese",
+    "trattoria": "italian",
+    "yakitori": "japanese",
+}
+
+
 def _norm_text(value: Any) -> str:
     """Lowercase, punctuation-free, single-spaced — for comparing labels."""
     return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
@@ -636,12 +671,21 @@ def _is_restaurant_name(session: ConciergeSession, label: str) -> bool:
 
 
 def _clean_cuisines(session: ConciergeSession, value: Any) -> list[str]:
-    """Filter a proposed cuisines list down to values worth remembering."""
+    """Filter a proposed cuisines list down to values worth remembering.
+
+    The translation to a kitchen happens here and nowhere else, because here is
+    the boundary with the permanent file. The search still goes out on the word
+    the guest actually used — asking Google for "american" when someone wanted a
+    burger would fetch the wrong places entirely.
+    """
     incoming = value if isinstance(value, list) else [value]
     out: list[str] = []
     for item in incoming:
         cuisine = _clean_cuisine(item)
-        if cuisine and not _is_restaurant_name(session, item) and cuisine not in out:
+        if not cuisine or _is_restaurant_name(session, item):
+            continue
+        cuisine = _KITCHEN_BEHIND_THE_DISH.get(cuisine, cuisine)
+        if cuisine not in out:
             out.append(cuisine)
     return out
 
@@ -685,6 +729,19 @@ def _curated(session: ConciergeSession, args: dict[str, Any]) -> dict[str, Any]:
     return updates
 
 
+def _translation_note(asked: Any, filed: list[str] | None) -> str:
+    """Tell Dino when what was filed isn't the word the guest used."""
+    named = {_norm_text(c) for c in (asked if isinstance(asked, list) else [asked])}
+    changed = [c for c in (filed or []) if c not in named]
+    if not changed:
+        return ""
+    return (
+        f" Filed as {', '.join(changed)} — the kitchen behind what they named, "
+        "because a dish isn't a taste. If you mention the memory at all, say it "
+        "that way; don't read their dish back to them as a favourite cuisine."
+    )
+
+
 def _handle_remember(session: ConciergeSession, args: dict[str, Any]) -> str:
     updates = _curated(session, args)
     # A cuisine that didn't survive curation has to be said out loud, or Dino
@@ -695,6 +752,10 @@ def _handle_remember(session: ConciergeSession, args: dict[str, Any]) -> str:
         "category. Don't tell them you'll remember it as a favourite cuisine."
         if args.get("cuisines") and "cuisines" not in updates else ""
     )
+    # And a dish that *was* translated has to be said out loud for the same
+    # reason, the other way round: the file now reads "american", and a guest
+    # told "I'll remember you love burgers" has been promised something else.
+    refused += _translation_note(args.get("cuisines"), updates.get("cuisines"))
     if not updates:
         return "Nothing to save." + refused
 
@@ -1161,29 +1222,26 @@ def _handle_times(session: ConciergeSession, args: dict[str, Any]) -> str:
                     "keep this date and party size.",
     }
 
-    # If the guest already named a time and it's free, they have chosen. Telling
-    # the model not to read the list back didn't hold — it still did — so the list
-    # is simply not here to read. Their time is the only one in the payload; the
-    # full set stays on the session for the booking guard, and the model can ask
-    # for it again if the guest actually wants alternatives. Once per restaurant
-    # and date, so "what else is open?" gets a real answer on the second call.
+    # If the guest already named a time and it's free, say so first. Withholding
+    # the other slots was the earlier fix — it stopped the list being read back,
+    # but it also took away a choice the guest is entitled to see. What actually
+    # stung wasn't being shown the alternatives; it was being asked to pick again
+    # as though the 6 PM they'd just named had gone unheard. So the whole list
+    # stays, and the reply has to open by naming their time and confirming it's
+    # free, with the rest offered as something to look over rather than a question
+    # they owe an answer to.
     already_asked = sorted(_requested_times(session) & set(slots))
-    shortcut = f"{place_id}|{iso}"
-    if already_asked and shortcut not in session.time_shortcuts:
-        session.time_shortcuts.add(shortcut)
+    if already_asked:
         chosen = already_asked[0]
-        payload["available_times"] = [chosen]
-        payload["available_times_display"] = [to_12h(chosen)]
         payload["guest_already_chose"] = to_12h(chosen)
         payload["other_times_open"] = len(slots) - 1
         payload["instruction"] = (
-            f"The guest asked for {to_12h(chosen)} and it is free, so that is the "
-            "only time listed here — the others are deliberately withheld. Do NOT "
-            "read a list back or ask them to pick again; they have already chosen. "
-            "Confirm that time, read the booking details back for a yes, and spend "
-            "the question you just saved on something they'd like (photos, or what "
-            "people order there). If they ask what else is open, call "
-            "check_availability_times again and the full list comes back."
+            f"The guest asked for {to_12h(chosen)} and it IS free. Open by saying "
+            "exactly that — name their time and confirm it's available, so they can "
+            "hear that you listened. Then, in one sentence, say the other times in "
+            "available_times_display are there if they'd like to look them over. "
+            f"Their {to_12h(chosen)} stands unless they say otherwise: do not ask "
+            "them to choose again, and never pick a different time for them."
         )
     return json.dumps(payload, ensure_ascii=False)
 

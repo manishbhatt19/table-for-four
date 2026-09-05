@@ -381,20 +381,21 @@ def _time_chips(session: ConciergeSession) -> str | None:
     if any(k.startswith(f"{pend.get('place_id')}|{pend.get('date')}|")
            for k in session.bookings):
         return None
-    # And once the guest has named one of them, the picker has done its job. It
-    # used to stay up until a booking existed, which was a short window — until
-    # the reserve gate put a confirmation step in the middle, and a guest who had
-    # already answered watched the same question sit there turn after turn.
-    if _requested_times(session) & set(slots):
-        return None
-
+    # These stay up even once the guest has named a time. Hiding them then was an
+    # attempt to stop the picker outlasting its question, but it meant a guest who
+    # said "6pm" got the alternatives read out as prose instead — a list to scroll
+    # where a moment earlier there were buttons to tap. The reserve gate already
+    # takes the picker down at the point it would start nagging, so the times can
+    # simply stay tappable for as long as they're on offer.
     where = (session.pending.get("restaurant")
              if session.pending.get("place_id") == pend.get("place_id") else None)
+    chosen = _requested_times(session) & set(slots)
     st.caption(
         "🕑 Open times"
         + (f" at {where}" if where else "")
         + (f" on {pend['date']}" if pend.get("date") else "")
-        + " — tap one, or just tell Dino."
+        + (" — yours is set; tap another only if you'd like to change it."
+           if chosen else " — tap one, or just tell Dino.")
     )
 
     picked = None
