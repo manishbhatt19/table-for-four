@@ -1491,6 +1491,12 @@ def test_parse_time_tokens_reads_clock_times():
     assert {"07:30", "19:30"} <= both
 
 
+# These two book a real date. Hard coding one made them pass until the day it named
+# went by, and then fail as `date_in_past` for reasons having nothing to do with the
+# behaviour under test. Tomorrow is always in the future.
+_TOMORROW = (date.today() + timedelta(days=1)).isoformat()
+
+
 def test_book_enforces_the_time_the_guest_requested(monkeypatch):
     # Regression: the guest asked for an available time; the model must book THAT
     # time, not a different open slot.
@@ -1504,12 +1510,12 @@ def test_book_enforces_the_time_the_guest_requested(monkeypatch):
 
     session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com", "party_size": 2})
     _listed(session)
-    session.availability = {"place_id": "p1", "date": "2026-09-04", "party_size": 2,
+    session.availability = {"place_id": "p1", "date": _TOMORROW, "party_size": 2,
                             "slots": ["19:00", "20:00"]}
     session.messages = [HumanMessage(content="7pm works great")]
 
     out = _json.loads(cc._handle_book(session, {
-        "place_id": "p1", "date": "2026-09-04", "time": "20:00", "party_size": 2,
+        "place_id": "p1", "date": _TOMORROW, "time": "20:00", "party_size": 2,
     }))
     assert out["status"] == "time_mismatch"
     assert out["requested_times"] == ["19:00"]
@@ -1529,12 +1535,12 @@ def test_book_accepts_the_requested_time(monkeypatch):
 
     session = cc.ConciergeSession(member_id="g@x.com", profile={"email": "g@x.com", "party_size": 2})
     _listed(session)
-    session.availability = {"place_id": "p1", "date": "2026-09-04", "party_size": 2,
+    session.availability = {"place_id": "p1", "date": _TOMORROW, "party_size": 2,
                             "slots": ["19:00", "20:00"]}
     session.messages = [HumanMessage(content="let's do 7pm")]
 
     out = _json.loads(cc._handle_book(session, {
-        "place_id": "p1", "date": "2026-09-04", "time": "19:00", "party_size": 2,
+        "place_id": "p1", "date": _TOMORROW, "time": "19:00", "party_size": 2,
     }))
     assert out["status"] == "booked"
     assert out["time"] == "19:00"
