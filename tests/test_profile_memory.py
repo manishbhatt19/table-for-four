@@ -2047,3 +2047,56 @@ def test_being_recognised_asks_about_a_changed_usual_rather_than_assuming(monkey
     assert out["saved_preferences"]["party_size"] == 2
     assert sorted(out["preference_check"]["proposals"]) == ["home_location", "party_size"]
     assert session.pref_offer["proposals"]        # and the offer is on the record
+
+
+# --- The email the guest already gave ----------------------------------------
+
+def test_signing_in_with_an_email_is_not_a_reason_to_ask_for_it_again(monkeypatch):
+    # A first-time guest typed their email into the sidebar, which is where the app
+    # asks for it, and was then asked for it twice more: once while Dino gathered
+    # details, because `known_so_far.email_on_file` was empty, and once by the hard
+    # gate in `book_table`. The session knew the address the whole time — it was the
+    # member id — it just never counted as the guest having answered.
+    import json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    monkeypatch.setattr(cc.profile_memory, "load", lambda member_id: None)
+    session = cc.start_session("brand.new@example.com", confirm_in_ui=True)
+
+    assert session.profile["email"] == "brand.new@example.com"
+    assert cc._working_memory(session)["email_on_file"] == "brand.new@example.com"
+
+    refused = json.loads(cc._handle_book(session, {"place_id": "x", "date": "Friday",
+                                                   "time": "19:00", "party_size": 2}))
+    assert refused["status"] != "email_required"
+
+
+def test_a_guest_who_signs_in_by_name_is_still_asked_for_an_email(monkeypatch):
+    # The other half: a handle is not an address, so nothing is seeded and the
+    # booking gate still holds. Inventing an email would be worse than asking.
+    import json
+
+    import table_for_four.agent.concierge_chat as cc
+
+    monkeypatch.setattr(cc.profile_memory, "load", lambda member_id: None)
+    session = cc.start_session("manish", confirm_in_ui=True)
+
+    assert not (session.profile or {}).get("email")
+    refused = json.loads(cc._handle_book(session, {"place_id": "x", "date": "Friday",
+                                                   "time": "19:00", "party_size": 2}))
+    assert refused["status"] == "email_required"
+
+
+def test_an_unknown_email_does_not_make_dino_welcome_a_stranger_back(monkeypatch):
+    # The seeded email lives on the session only. Folding it into the briefing
+    # profile would have introduced a first-time guest as RETURNING, and Dino would
+    # have opened by welcoming them back by a name nobody ever gave it.
+    import table_for_four.agent.concierge_chat as cc
+
+    monkeypatch.setattr(cc.profile_memory, "load", lambda member_id: None)
+    session = cc.start_session("nobody.has.this@example.com")
+
+    about_this_guest = session.messages[0].content.split("## This guest")[-1]
+    assert "NEW guest" in about_this_guest
+    assert "RETURNING guest" not in about_this_guest

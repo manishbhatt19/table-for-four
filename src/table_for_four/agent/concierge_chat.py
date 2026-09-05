@@ -1924,11 +1924,28 @@ def press_change_my_mind(session: ConciergeSession) -> str:
 
 def start_session(member_id: str, confirm_in_ui: bool = False) -> ConciergeSession:
     """Build a session, load any saved profile, and seed the system prompt."""
-    profile = profile_memory.load(member_id)
+    key = profile_memory.resolve_key(member_id)
+    stored = profile_memory.load(member_id)
+
+    # Signing in with an email *is* giving us the email, and a guest who typed one
+    # into the sidebar was being asked for it twice more: once while gathering
+    # details, because `known_so_far.email_on_file` was empty, and again by the hard
+    # gate in `_handle_book`. They had already answered before Dino said hello.
+    #
+    # Only the session's copy is seeded. `stored` stays exactly as it came back, so
+    # a first-time guest is still introduced below as NEW rather than welcomed back
+    # by a name we do not have.
+    profile = ({**(stored or {}), "email": key}
+               if profile_memory.looks_like_email(key) else stored)
+
     session = ConciergeSession(
-        member_id=profile_memory.resolve_key(member_id),
+        member_id=key,
         profile=profile,
         # A recognized guest needs no "have we met?" — we already have their file.
+        # Nor does an email sign-in that found nothing: we have just looked them up
+        # under the address they gave, so asking is a question we answered already.
+        # A guest who booked under some *other* address can still say so, and Dino
+        # calls `set_confirmation_email` to pull that profile in.
         asked_returning=bool((profile or {}).get("email")),
         confirm_in_ui=confirm_in_ui,
     )
@@ -1955,7 +1972,7 @@ def start_session(member_id: str, confirm_in_ui: bool = False) -> ConciergeSessi
         "date, pass the guest's own words (e.g. 'Friday', 'next Saturday'); the "
         "system resolves them against today. NEVER invent a specific calendar date.\n\n"
         f"## This surface\n{surface}\n\n"
-        "## This guest\n" + _profile_context(profile)
+        "## This guest\n" + _profile_context(stored)
     )
     session.messages = [SystemMessage(content=SYSTEM_PROMPT + "\n\n## Context\n" + context)]
     return session
