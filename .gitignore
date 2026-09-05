@@ -31,3 +31,6 @@ src/table_for_four/mcp_servers/booking/backend/bookings.db
 # Agentic harness: the shared config (.claude/settings.json, agents/, skills/) is
 # committed on purpose — it's part of the project. Only personal overrides aren't.
 .claude/settings.local.json
+
+# Office lock files: created while a document is open, never wanted in the repo
+~$*
