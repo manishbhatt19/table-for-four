@@ -13,14 +13,26 @@ confirmation step and a full governance/audit trail.
 > developed using Claude Code (agentic coding in VS Code) — a small live
 > demonstration of agentic tooling in the dev workflow itself.
 
-## Architecture (target)
+## Architecture
 
 ```
-User (chat) → Orchestrator Agent (LangGraph)
-                 ├── Search MCP Server   → Google Places API (New)
-                 └── Booking MCP Server  → mock FastAPI reservation backend
-              → Governance / Audit Layer (logs every tool call + human approval)
-              → Human-in-the-loop confirmation gate → booking finalized
+Guest ──▶ Dino, the conversational path      or   LangGraph orchestrator, scripted
+          (two model calls per turn,              (parse → search → perks → rank →
+           six tool steps at most)                 propose → GATE → book → audit)
+                              │
+                              ▼
+          the permission broker — every tool call runs as a declared unit,
+          and a unit reaching past its grant raises rather than proceeding
+                              │
+   ┌───────────────┬──────────┴─────┬─────────────────┬────────────────────┐
+   ▼               ▼                ▼                 ▼                    ▼
+ search MCP     perks MCP        web MCP         booking MCP         profile store
+ Google Places  Chroma, local    Tavily,         FastAPI service     Chroma, keyed
+ API (New)      embeddings       cited snippets  + SQLite ledger     by email
+                              │
+                              ▼
+     Governance across all of it — a human approval gate that genuinely stops
+     the run, an append-only audit trail, and a grounding check on every reply
 ```
 
 Search uses **real** Google Places data; the transactional booking step uses a
@@ -28,18 +40,24 @@ Search uses **real** Google Places data; the transactional booking step uses a
 partner-gated and Yelp dropped its free tier. This is a standard, defensible
 pattern for agent prototyping against partner-gated downstream systems.
 
+Every path degrades to fixtures without an API key, so the whole system — search,
+perks, web highlights, booking, and the model itself — runs offline.
+
 ## Status
 
 | Milestone | State |
 |---|---|
-| 1 — Search MCP server (Google Places, offline-testable) | ✅ working |
-| 2 — Mock booking FastAPI + booking MCP server | ✅ working |
-| 2.5 — Perks/RAG: synthetic perks → Chroma → `find_perks` MCP tool | ✅ working |
-| 3 — LangGraph orchestrator, end-to-end happy path | ✅ working |
-| 3.5 — Conversational concierge (Dino) + long-term member memory | ✅ working |
-| 3.6 — Web highlights: Tavily menu/photo lookup → generated menu cards | ✅ working |
-| 4 — Human-in-loop gate + governance/audit logging | ⬜ next |
-| 5 (stretch) — model comparison, polished demo | ⬜ |
+| 1 — Search MCP server (Google Places, offline-testable) | ✅ shipped |
+| 2 — Mock booking FastAPI + booking MCP server | ✅ shipped |
+| 2.5 — Perks/RAG: synthetic perks → Chroma → `find_perks` MCP tool | ✅ shipped |
+| 3 — LangGraph orchestrator, end-to-end happy path | ✅ shipped |
+| 3.5 — Conversational concierge (Dino) + long-term member memory | ✅ shipped |
+| 3.6 — Web highlights: Tavily menu/photo lookup → generated menu cards | ✅ shipped |
+| 4 — Agentic harness: five declared units with enforced permissions | ✅ shipped |
+| 4 — Human-in-loop gate + governance/audit logging + reply grounding | ✅ shipped |
+| 5 — Capstone deck and demo | ✅ shipped |
+
+**236 tests**, all offline: no API key, no network, about 30 seconds.
 
 ## Getting started
 
@@ -68,21 +86,24 @@ uv run src/table_for_four/mcp_servers/search/server.py
 
 To enable live data, see [docs/google_places_setup.md](docs/google_places_setup.md).
 
-### Run the concierge (M3)
+### Run the concierge
 
-The orchestrator chains search → perks → booking through a LangGraph state machine
-with a refine-retry loop and per-thread working memory. Run it end-to-end:
+The orchestrator chains search → perks → **approval** → booking through a LangGraph
+state machine with a refine-retry loop and per-thread working memory. Run it
+end-to-end:
 
 ```bash
 uv run python -m table_for_four                                  # default sample request
 uv run python -m table_for_four "Italian for 4, Friday 7pm"      # custom request
 uv run python -m table_for_four --heuristic "sushi for 2"        # force offline mode
+uv run python -m table_for_four --yes "sushi for 2"              # unattended: pre-approve
+uv run langgraph dev                                             # the graph in LangGraph Studio
 ```
 
-It prints the full reasoning trace and the booking confirmation. With an
-`OPENAI_API_KEY` (or OpenRouter) set in `.env` it uses the LLM to parse the request
-and write the confirmation; with no key it runs a deterministic heuristic path, so
-the whole loop works offline.
+It prints the full reasoning trace, stops at the gate to ask the person at the
+keyboard, and only then books. With an `OPENAI_API_KEY` (or OpenRouter) set in
+`.env` it uses the LLM to parse the request and write the confirmation; with no key
+it runs a deterministic heuristic path, so the whole loop works offline.
 
 ## Interpersonal concierge — Dino
 
@@ -102,6 +123,44 @@ The Streamlit UI (`src/table_for_four/ui/chat_app.py`) is a thin wrapper over th
 (`start_session` + `_run_turn`) — the sidebar shows the guest's long-term profile
 filling in live from Chroma as they talk.
 
+## Five units, and what each is allowed to touch
+
+Capability is split by **authority rather than skill**. Each unit is one markdown
+file in [src/table_for_four/agent/roster/](src/table_for_four/agent/roster/):
+frontmatter declares what it may call, the body is its brief.
+
+| Unit | Role | Holds | Cannot |
+|---|---|---|---|
+| **Dino** | Host, the only unit that runs a model | *nothing* | every capability in the system |
+| **Scout** | Finds the table, never takes it | search, perks, availability | book, cancel, write to memory |
+| **Curator** | Knows the food, never meets the guest | web highlights, photos | search, book, write to memory |
+| **Steward** | Keeper of the member's own record | remember, adopt an identity | search, book, reach the web |
+| **Booker** | The only unit that commits the guest | create and cancel bookings | search, reach the web, adopt an identity |
+
+The unit that reasons owns no tools, so it can only *ask* a unit that holds one —
+misbehaviour is a `NotGranted` exception rather than a policy violation. Booker
+cannot search, so a booking may only name a restaurant Scout already surfaced.
+Widening a permission means editing the file and saying why.
+
+## Governance — the gate, the trail, and the reply check
+
+[src/table_for_four/governance/](src/table_for_four/governance/) is the layer that
+sits across everything above.
+
+- **Nothing books without a person saying yes.** In the graph, `gate_node` issues a
+  real LangGraph `interrupt`: the run checkpoints and genuinely stops until a caller
+  resumes it with a decision. Anything that is not clearly a yes — no approver, an
+  unparsable answer, end of input — declines. In chat, the summary goes on screen
+  with Reserve and Change my mind. There is no default that books, on either path.
+- **An append-only audit trail** (`audit.py`) records every tool call, approval and
+  finding, each naming the acting unit, the member and the time, optionally mirrored
+  to a JSON Lines file via `TF4_AUDIT_LOG`. The Streamlit sidebar shows it live.
+- **Every reply is checked before the guest reads it** (`grounding.py`). A time,
+  date, confirmation id or email that no tool returned is removed from the reply and
+  recorded either way. It is deterministic code rather than a second model, because
+  each of those has an exact answer already in session state. Dish and restaurant
+  names are **not** covered, and the module says so rather than implying otherwise.
+
 ## Bookings ledger & cancellation policy
 
 Reservations persist to a **SQLite ledger** in the mock backend
@@ -116,8 +175,9 @@ model: `POST /bookings/{id}/cancel` cancels a booking that's more than 24h away 
 stamps the ledger; inside that window it refuses and returns the restaurant's phone
 and website so the guest can call directly. Dino exposes this as `cancel_reservation`
 and relays the "call the restaurant" path verbatim — Dino never claims a
-cancellation the backend didn't confirm — and the guest's long-term memory is kept
-in sync with the ledger.
+cancellation the backend didn't confirm. A cancellation made through Dino also flips
+the status in the guest's own history (`mark_booking`), so the two agree; a booking
+cancelled out of band does not, and reconciling that is still open.
 
 ## Perks RAG — retrieval you can measure and inspect
 
@@ -182,8 +242,13 @@ table-for-four/
 │   │   ├── config.py               #   provider-agnostic LLM loader (OpenAI/OpenRouter)
 │   │   ├── concierge_chat.py       #   Dino: the turn-by-turn booking journey
 │   │   ├── profile_memory.py       #   long-term member memory (Chroma)
+│   │   ├── roster/                 #   the five units: one .md each, permissions
+│   │   │                           #   in frontmatter, brief in the body
 │   │   ├── menu_card.py            #   generated cuisine-themed menu cards (SVG)
 │   │   └── calendar_invite.py      #   .ics builder for a confirmed booking
+│   ├── governance/                 # the gate, the trail, and the reply check
+│   │   ├── audit.py                #   append-only records, actor on every line
+│   │   └── grounding.py            #   every reply checked against tool results
 │   ├── mcp_servers/                # one package per tool server, data included
 │   │   ├── search/                 #   Google Places + offline places fixture
 │   │   ├── perks/                  #   perks RAG: server, seed data, eval, inspector,
@@ -193,9 +258,9 @@ table-for-four/
 │   │   └── web/                    #   Tavily menu highlights + offline fixture
 │   └── ui/
 │       └── chat_app.py             # Streamlit chat UI (live memory panel)
-├── tests/                          # offline suite, no keys or network needed
-├── docs/                           # scoping, submissions, progress, overview
-└── governance/                     # (M4) audit log + human-approval gate
+├── tests/                          # 236 offline tests, no keys or network needed
+└── docs/                           # design reference, harness and testing notes,
+                                    # architecture diagram, capstone deck
 ```
 
 Each MCP server keeps its own fixtures and persistent store beside it, so a server
